@@ -368,6 +368,18 @@ button {
   color: var(--accent-moon);
 }
 
+.test-mode-badge {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: normal;
+  color: var(--accent-blood);
+  background: rgba(192, 57, 43, 0.15);
+  border: 1px solid var(--accent-blood);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
 /* ---------- TOGGLE SWITCH ---------- */
 .toggle-row {
   display: flex;
