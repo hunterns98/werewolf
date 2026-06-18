@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🐺 Ma Sói — Người Chơi</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+
+    <!-- ========== JOIN SCREEN ========== -->
+    <div id="joinScreenPlayer" class="join-card">
+      <h1>🐺 Ma Sói</h1>
+      <p class="subtitle">Nhập mã phòng và tên của bạn để vào game</p>
+
+      <input type="text" id="inputRoomCodePlayer" placeholder="Mã phòng (VD: AB12)" />
+      <input type="text" id="inputPlayerName" placeholder="Tên của bạn" />
+      <button id="btnJoinGame" class="btn-big btn-confirm">🚪 Vào phòng</button>
+    </div>
+
+    <!-- ========== GAME SCREEN ========== -->
+    <div id="gameScreenPlayer" class="hidden">
+
+      <div id="statusBar" class="status-bar alive">🟢 Đang kết nối...</div>
+
+      <div id="phaseInfoPlayer" class="phase-info">⏳ Đang chờ...</div>
+
+      <div id="aliveCounter" class="alive-counter">👥 Còn sống: -- / --</div>
+
+      <!-- WIN BANNER -->
+      <div id="winBannerPlayer" class="hidden"></div>
+
+      <!-- ROLE CARD -->
+      <div id="roleCard" class="role-card">
+        <p>⏳ Đang chờ Admin bắt đầu game...</p>
+      </div>
+
+      <!-- VOTING AREA (chỉ hiện khi phase = day và còn sống) -->
+      <div id="votingArea" class="panel hidden"></div>
+
+      <!-- DEBUG REVEAL (chỉ hiện khi đã chết và admin bật debug mode) -->
+      <div id="debugRevealSection" class="panel hidden"></div>
+
+      <!-- LOG CÔNG KHAI -->
+      <div class="panel">
+        <h3>📜 Diễn biến game</h3>
+        <div id="logPanelPlayer" class="log-panel"></div>
+      </div>
+
+    </div>
+
+    <!-- ========== DEATH OVERLAY (full screen khi vừa chết) ========== -->
+    <div id="deathOverlay" class="death-overlay hidden">
+      <h1>💀 YOU ARE DEAD</h1>
+      <p>Bạn đã chết. Hãy tiếp tục theo dõi diễn biến game trong im lặng...</p>
+    </div>
+
+  </div>
+
+  <script type="module" src="player.js"></script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🐺 Ma Sói — Admin Panel</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+
+    <!-- ========== JOIN / CREATE ROOM SCREEN ========== -->
+    <div id="joinScreen" class="join-card">
+      <h1>🐺 Ma Sói</h1>
+      <p class="subtitle">Bảng điều khiển Quản Trò (Admin)</p>
+
+      <button id="btnCreateRoom" class="btn-big btn-primary">➕ Tạo phòng mới</button>
+
+      <p style="color: var(--text-muted); margin: 16px 0 8px;">— hoặc vào lại phòng cũ —</p>
+      <input type="text" id="inputRoomCode" placeholder="Nhập mã phòng (VD: AB12)" />
+      <button id="btnJoinRoom" class="btn-big btn-skip">🔑 Vào phòng</button>
+    </div>
+
+    <!-- ========== ADMIN MAIN SCREEN ========== -->
+    <div id="adminScreen" class="hidden">
+
+      <div class="room-code-box">
+        Mã phòng: <span id="roomCodeDisplay">----</span>
+      </div>
+
+      <div id="phaseBanner" class="phase-banner phase-lobby">🛋️ Phòng chờ</div>
+
+      <!-- WIN SCREEN -->
+      <div id="winScreen" class="hidden"></div>
+
+      <!-- ĐIỀU KHIỂN VÒNG CHƠI -->
+      <div class="panel">
+        <h2>🎛️ Điều khiển</h2>
+        <div class="btn-row">
+          <button id="btnStartGame" class="btn-big btn-confirm">▶️ START GAME</button>
+        </div>
+        <div class="btn-row">
+          <button id="btnResetGame" class="btn-big btn-danger">🔄 RESET GAME</button>
+        </div>
+        <div class="toggle-row">
+          <label for="debugToggle">🔍 Debug Mode (người chết xem được role tất cả)</label>
+          <input type="checkbox" id="debugToggle" />
+        </div>
+      </div>
+
+      <!-- NIGHT ACTION PANEL — từng bước theo thứ tự -->
+      <div id="nightActionPanel" class="panel hidden">
+        <!-- nội dung được admin.js render động -->
+      </div>
+
+      <!-- DAY VOTE PANEL -->
+      <div id="dayVotePanel" class="panel hidden">
+        <!-- nội dung được admin.js render động -->
+      </div>
+
+      <!-- PLAYER LIST -->
+      <div class="panel">
+        <h2>👥 Danh sách người chơi</h2>
+        <div id="playerListAdmin"></div>
+      </div>
+
+      <!-- GAME LOG -->
+      <div class="panel">
+        <h2>📜 Lịch sử game (Log)</h2>
+        <div id="logPanel" class="log-panel"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script type="module" src="admin.js"></script>
+</body>
+</html>
