@@ -397,3 +397,169 @@ button {
   .phase-banner { font-size: 1.1rem; }
   .role-name { font-size: 1.4rem; }
 }
+
+/* ============================================================
+   ADDITIONS v2.0
+   ============================================================ */
+
+/* ---------- GAME SETUP PANEL ---------- */
+.team-summary {
+  display: flex;
+  gap: 16px;
+  padding: 10px;
+  background: var(--bg-panel-light);
+  border-radius: 8px;
+  margin: 10px 0;
+  font-weight: 700;
+  flex-wrap: wrap;
+}
+
+.role-options {
+  margin-top: 10px;
+}
+.role-options .toggle-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* ---------- SEER HISTORY ---------- */
+.seer-history {
+  background: var(--bg-panel-light);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.seer-history-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.9rem;
+  color: var(--text-light);
+}
+.seer-history-row:last-child { border-bottom: none; }
+
+/* ---------- LOVER CARD ---------- */
+.lover-card {
+  background: linear-gradient(135deg, rgba(231,76,60,0.15), rgba(155,89,182,0.15));
+  border: 1px solid rgba(231,76,60,0.4);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  line-height: 1.8;
+}
+.lover-death-notice {
+  color: var(--accent-blood);
+  font-weight: 700;
+  margin-top: 6px;
+  animation: pulse 1.5s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ---------- PLAYER LIST COMPACT ---------- */
+.player-list-compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.player-chip {
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.player-chip.alive {
+  background: rgba(46,204,113,0.15);
+  color: var(--accent-good);
+  border: 1px solid rgba(46,204,113,0.3);
+}
+.player-chip.dead {
+  background: rgba(192,57,43,0.15);
+  color: var(--accent-blood);
+  border: 1px solid rgba(192,57,43,0.3);
+  text-decoration: line-through;
+}
+
+/* ---------- CHAT ---------- */
+.chat-messages {
+  max-height: 200px;
+  overflow-y: auto;
+  background: #0c0f1a;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  font-size: 0.88rem;
+}
+.chat-msg {
+  padding: 5px 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  color: var(--text-light);
+  line-height: 1.4;
+}
+.chat-msg.chat-mine {
+  background: rgba(52,152,219,0.2);
+  text-align: right;
+}
+.chat-input-row {
+  display: flex;
+  gap: 6px;
+}
+.chat-input-row input {
+  flex: 1;
+  margin-bottom: 0;
+}
+.btn-send {
+  background: var(--accent-moon);
+  color: #1a1a1a;
+  border-radius: 8px;
+  padding: 0 16px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+/* ---------- TIMER ---------- */
+.timer-display {
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 800;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--bg-panel-light);
+  color: var(--text-light);
+  margin-bottom: 8px;
+}
+.timer-display.timer-urgent {
+  background: rgba(192,57,43,0.3);
+  color: #ff6b6b;
+  animation: blink 0.8s step-end infinite;
+}
+@keyframes blink {
+  50% { opacity: 0.6; }
+}
+
+/* ---------- HUNTER PANEL ---------- */
+#hunterPanel {
+  border: 2px solid var(--accent-blood);
+  animation: popIn 0.3s ease;
+}
+#hunterPanel h3 {
+  color: var(--accent-blood);
+}
+
+/* ---------- VOTE BTN UPDATE ---------- */
+.vote-btn {
+  width: 100%;
+  margin-bottom: 6px;
+  text-align: left;
+  padding: 12px 16px;
+  border-radius: 10px;
+}
+
+/* ---------- WITCH PANEL ---------- */
+.witch-panel .witch-info {
+  font-weight: 600;
+}
