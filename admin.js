@@ -1,28 +1,30 @@
 // ============================================================
-// ADMIN.JS — ĐIỀU KHIỂN GAME (LAYER "RA LỆNH")
-// ============================================================
-// Admin KHÔNG tự tính toán logic phức tạp trong UI.
-// Mọi tính toán đi qua các hàm thuần trong game.js.
-// admin.js chỉ: đọc input UI -> gọi hàm logic -> ghi Firestore.
+// ADMIN.JS — ĐIỀU KHIỂN GAME v2.0
 // ============================================================
 
 import {
   db, doc, setDoc, getDoc, updateDoc, onSnapshot, deleteField, serverTimestamp,
 } from "./firebase.js";
 import {
-  ROLES, ROLE_LABEL_VI, DEATH_CAUSE_LABEL_VI, WIN_LABEL_VI,
-  assignRoles, emptyNightState, emptyWitchUsage, getNightStepsForRound, getNextNightStep,
-  getAlivePlayers, applyCupid, resolveNight, resolveSeer,
-  resolveDayVote, applyDayVoteResult, checkWinCondition, makeLogEntry,
+  ROLES, ROLE_LABEL_VI, ROLE_TEAM, ROLE_TEAM_LABEL_VI,
+  DEATH_CAUSE_LABEL_VI, WIN_LABEL_VI,
+  assignRoles, emptyNightState, emptyWitchUsage,
+  getNightStepsForRound, getNextNightStep, getPresentRoles,
+  getAlivePlayers, applyCupid, applyThief, resolveNight, resolveSeer,
+  resolveDayVote, applyDayVoteResult, applyHunterKill, checkWinCondition,
+  makeLogEntry, getRolePreset, buildRoleList,
 } from "./game.js";
 
-// ---------- STATE CỤC BỘ (chỉ cache để render, nguồn thật luôn là Firestore) ----------
 let roomCode = null;
 let roomRefDoc = null;
-let currentRoom = null; // snapshot gần nhất từ Firestore
+let currentRoom = null;
 let unsubscribe = null;
 
-// ---------- DOM HELPERS ----------
+// Timer state (local only — not stored in Firestore to avoid conflicts)
+let timerInterval = null;
+let timerRemaining = 0;
+let timerRunning = false;
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -44,9 +46,21 @@ export async function createRoom() {
     players: {},
     nightState: null,
     dayVotes: {},
+    chat: {},
     logs: [makeLogEntry(0, "lobby", "Phòng được tạo. Đang chờ người chơi vào...", "system")],
-    settings: { debugMode: false, testMode: false },
+    settings: {
+      debugMode: false,
+      testMode: false,
+      roleMode: "auto",
+      roleOptions: {},
+      playerCount: 11,
+    },
     winner: null,
+    hunterPending: null,
+    timerEndAt: null,
+    timerDuration: null,
+    timerPhase: null,
+    seerHistory: {},
     createdAt: serverTimestamp(),
   });
   enterRoom(code);
@@ -68,52 +82,91 @@ export function enterRoom(code) {
 }
 
 // ============================================================
-// 2. ĐIỀU KHIỂN VÒNG CHƠI
+// 2. GAME CONTROL
 // ============================================================
 
-/**
- * Start game: yêu cầu đúng 11 người trong phòng, random role, chuyển sang night round 1
- */
 export async function startGame() {
   if (!currentRoom) return;
   const players = currentRoom.players || {};
   const count = Object.keys(players).length;
-  if (count !== 11) {
-    alert(`Cần đúng 11 người chơi để bắt đầu. Hiện tại: ${count}`);
+
+  if (count < 8 || count > 20) {
+    alert(`Cần 8–20 người chơi để bắt đầu. Hiện tại: ${count}`);
     return;
   }
 
-  const withRoles = assignRoles(players);
+  const settings = currentRoom.settings || {};
+  let roleList;
+
+  if (settings.roleMode === "manual") {
+    // Use manually configured roles
+    const manualRoles = settings.manualRoles || [];
+    if (manualRoles.length !== count) {
+      alert(`Số vai trò (${manualRoles.length}) không khớp số người chơi (${count})`);
+      return;
+    }
+    roleList = manualRoles;
+  } else {
+    // Auto balance
+    const preset = getRolePreset(count, settings.roleOptions || {});
+    roleList = buildRoleList(preset);
+    if (roleList.length !== count) {
+      // Adjust villagers to match
+      const diff = count - roleList.length;
+      for (let i = 0; i < Math.abs(diff); i++) {
+        if (diff > 0) roleList.push("villager");
+        else {
+          const idx = roleList.lastIndexOf("villager");
+          if (idx !== -1) roleList.splice(idx, 1);
+        }
+      }
+    }
+  }
+
+  const withRoles = assignRoles(players, roleList);
   const round = 1;
   const nightState = emptyNightState(round);
-  const steps = getNightStepsForRound(round);
+  const presentRoles = getPresentRoles(withRoles);
+  const steps = getNightStepsForRound(round, presentRoles);
+
+  // Handle thief: pick 2 unused roles for thief to choose from
+  let thiefOptions = [];
+  if (presentRoles.has("thief")) {
+    // generate 2 random village roles not already in preset as extra
+    thiefOptions = ["villager", "villager"];
+    // In a real game these would be the 2 "set-aside" cards
+  }
 
   await updateDoc(roomRefDoc, {
     players: withRoles,
     phase: "night",
     round,
-    nightStep: steps[0], // 'cupid'
+    nightStep: steps[0],
     nightState,
     witchUsage: emptyWitchUsage(),
     dayVotes: {},
     winner: null,
+    hunterPending: null,
+    seerHistory: {},
+    timerEndAt: null,
+    timerDuration: null,
+    timerPhase: null,
+    thiefOptions,
     logs: [
       ...currentRoom.logs,
-      makeLogEntry(round, "night", "🎮 Game bắt đầu! Vai trò đã được chia. Đêm thứ 1 bắt đầu...", "system"),
+      makeLogEntry(round, "night", `🎮 Game bắt đầu! ${count} người chơi. Đêm thứ 1 bắt đầu...`, "system"),
     ],
   });
   playSound("start");
 }
 
-/**
- * Reset game: xóa role, alive, về lobby
- */
 export async function resetGame() {
   if (!currentRoom) return;
   const players = { ...currentRoom.players };
   Object.keys(players).forEach((id) => {
-    players[id] = { name: players[id].name }; // chỉ giữ tên
+    players[id] = { name: players[id].name };
   });
+  clearTimer();
   await updateDoc(roomRefDoc, {
     phase: "lobby",
     round: 0,
@@ -123,80 +176,86 @@ export async function resetGame() {
     witchUsage: null,
     dayVotes: {},
     winner: null,
-    logs: [makeLogEntry(0, "lobby", "🔄 Game đã được reset. Đang chờ bắt đầu lại...", "system")],
+    hunterPending: null,
+    seerHistory: {},
+    timerEndAt: null,
+    timerDuration: null,
+    timerPhase: null,
+    logs: [makeLogEntry(0, "lobby", "🔄 Game đã được reset.", "system")],
   });
 }
 
-/**
- * Toggle debug mode (cho phép người chết xem hết role)
- */
 export async function toggleDebugMode() {
   if (!currentRoom) return;
-  const newVal = !currentRoom.settings?.debugMode;
-  await updateDoc(roomRefDoc, { "settings.debugMode": newVal });
+  await updateDoc(roomRefDoc, { "settings.debugMode": !currentRoom.settings?.debugMode });
 }
 
-/**
- * Toggle Test Mode:
- * - BẬT: player.js sẽ KHÔNG dùng localStorage để nhớ danh tính -> mỗi lần
- *   join/refresh sinh playerId mới -> nhiều "người chơi" có thể dùng chung
- *   1 trình duyệt/máy để admin tự test mà không cần nhiều thiết bị thật.
- * - TẮT (mặc định/production): player.js dùng lại logic cũ — mỗi thiết bị
- *   chỉ là 1 player duy nhất (lưu trong localStorage, refresh không mất).
- * Field này nằm trong room.settings.testMode, player.js đọc field này
- * (qua getDoc trước khi join) để quyết định cách lấy playerId.
- */
 export async function toggleTestMode() {
   if (!currentRoom) return;
-  const newVal = !currentRoom.settings?.testMode;
-  await updateDoc(roomRefDoc, { "settings.testMode": newVal });
+  await updateDoc(roomRefDoc, { "settings.testMode": !currentRoom.settings?.testMode });
 }
 
 // ============================================================
-// 3. NIGHT ACTIONS — TỪNG BƯỚC THEO THỨ TỰ CHUẨN
+// 3. NIGHT ACTIONS
 // ============================================================
 
-/**
- * Gọi khi admin xác nhận xong 1 bước hành động đêm (đã chọn target trên UI)
- * stepData: dữ liệu cụ thể cho từng bước, ví dụ:
- *  - cupid: { lovers: [idA, idB] }
- *  - guardian: { protect: id }
- *  - werewolf: { target: id }
- *  - seer: { target: id }
- *  - witch: { save: bool, poisonTarget: id|null }
- */
 export async function submitNightAction(step, stepData) {
   if (!currentRoom) return;
   const round = currentRoom.round;
   const nightState = { ...currentRoom.nightState };
   let playersUpdate = currentRoom.players;
   let logs = [...currentRoom.logs];
+  let seerHistory = currentRoom.seerHistory || {};
 
   if (step === "cupid") {
     nightState.cupid = { done: true, lovers: stepData.lovers };
     playersUpdate = applyCupid(currentRoom.players, stepData.lovers);
     const names = stepData.lovers.map((id) => currentRoom.players[id].name).join(" 💞 ");
-    logs.push(makeLogEntry(round, "night", `Cupid đã ghép cặp: ${names}`, "info"));
+    logs.push(makeLogEntry(round, "night", `💘 Cupid đã ghép cặp: ${names}`, "info"));
+    // Notify lovers via their player data (set loverPartnerId)
+    const [idA, idB] = stepData.lovers;
+    playersUpdate[idA] = { ...playersUpdate[idA], loverPartnerId: idB };
+    playersUpdate[idB] = { ...playersUpdate[idB], loverPartnerId: idA };
+  }
+
+  if (step === "thief") {
+    nightState.thief = { done: true, chosenRole: stepData.chosenRole };
+    if (stepData.thiefId && stepData.chosenRole) {
+      playersUpdate = applyThief(currentRoom.players, stepData.thiefId, stepData.chosenRole);
+    }
+    logs.push(makeLogEntry(round, "night", `🃏 Ăn Trộm đã chọn vai trò: ${ROLE_LABEL_VI[stepData.chosenRole] || "?"}`, "info"));
   }
 
   if (step === "guardian") {
     nightState.guardian = { done: true, protect: stepData.protect };
-    logs.push(makeLogEntry(round, "night", `Bảo Vệ đã chọn bảo vệ 1 người (bí mật).`, "info"));
+    const name = stepData.protect ? currentRoom.players[stepData.protect]?.name : "Không ai";
+    logs.push(makeLogEntry(round, "night", `🛡️ Bảo Vệ đã bảo vệ: ${name}`, "info"));
   }
 
   if (step === "werewolf") {
     nightState.werewolf = { done: true, target: stepData.target };
-    logs.push(makeLogEntry(round, "night", `Sói đã chọn nạn nhân (bí mật).`, "info"));
+    const name = stepData.target ? currentRoom.players[stepData.target]?.name : "Không ai";
+    logs.push(makeLogEntry(round, "night", `🐺 Sói đã chọn cắn: ${name}`, "info"));
+  }
+
+  if (step === "cursed_wolf") {
+    nightState.cursed_wolf = { done: true, target: stepData.target };
+    const name = stepData.target ? currentRoom.players[stepData.target]?.name : "Không ai";
+    logs.push(makeLogEntry(round, "night", `🌀 Sói Nguyền đã nguyền: ${name}`, "info"));
   }
 
   if (step === "seer") {
     const result = resolveSeer(currentRoom.players, stepData.target);
     nightState.seer = { done: true, target: stepData.target, result };
+    // Store seer history (admin secret log)
+    seerHistory[round] = {
+      targetId: result.targetId,
+      targetName: result.targetName,
+      isWerewolf: result.isWerewolf,
+    };
     logs.push(
-      makeLogEntry(
-        round,
-        "night",
-        `Tiên Tri đã soi ${result.targetName}: ${result.isWerewolf ? "LÀ SÓI 🐺" : "không phải sói"}`,
+      makeLogEntry(round, "night",
+        `🔮 Tiên Tri đã soi ${result.targetName}: ${result.isWerewolf ? "LÀ SÓI 🐺" : "không phải sói 👤"}`,
         "info"
       )
     );
@@ -205,36 +264,48 @@ export async function submitNightAction(step, stepData) {
   let witchUsageUpdate = currentRoom.witchUsage || emptyWitchUsage();
 
   if (step === "witch") {
-    nightState.witch = {
-      done: true,
-      save: stepData.save,
-      poisonTarget: stepData.poisonTarget || null,
-    };
+    nightState.witch = { done: true, save: stepData.save, poisonTarget: stepData.poisonTarget || null };
     witchUsageUpdate = {
       healUsed: witchUsageUpdate.healUsed || stepData.save === true,
       poisonUsed: witchUsageUpdate.poisonUsed || !!stepData.poisonTarget,
     };
-    logs.push(makeLogEntry(round, "night", `Phù Thủy đã hành động (bí mật).`, "info"));
+    const saveMsg = stepData.save ? "đã cứu nạn nhân" : "không cứu";
+    const poisonMsg = stepData.poisonTarget
+      ? `đầu độc ${currentRoom.players[stepData.poisonTarget]?.name}`
+      : "không độc ai";
+    logs.push(makeLogEntry(round, "night", `🧪 Phù Thủy: ${saveMsg}, ${poisonMsg}`, "info"));
   }
 
-  // Tính bước kế tiếp TRƯỚC khi ghi, để gộp vào 1 lần update duy nhất
-  // (tránh 2 lần updateDoc liên tiếp gây race condition khi đọc currentRoom cũ)
-  const nextStep = getNextNightStep(step, round);
+  if (step === "flute_player") {
+    nightState.flute_player = { done: true, targets: stepData.targets || [] };
+    const names = (stepData.targets || []).map((id) => currentRoom.players[id]?.name).join(", ");
+    logs.push(makeLogEntry(round, "night", `🎶 Thổi Sáo đã ru ngủ: ${names || "Không ai"}`, "info"));
+    // Mark charmed players
+    (stepData.targets || []).forEach((id) => {
+      if (playersUpdate[id]) {
+        playersUpdate = { ...playersUpdate, [id]: { ...playersUpdate[id], isCharmed: true } };
+      }
+    });
+  }
+
+  const presentRoles = getPresentRoles(currentRoom.players);
+  const nextStep = getNextNightStep(step, round, presentRoles);
 
   if (nextStep) {
     await updateDoc(roomRefDoc, {
       players: playersUpdate,
       nightState,
       witchUsage: witchUsageUpdate,
+      seerHistory,
       logs,
       nightStep: nextStep,
     });
   } else {
-    // Hết các bước đêm -> ghi state cuối cùng rồi resolve toàn bộ đêm ngay (dùng data local, không chờ snapshot quay lại)
     await updateDoc(roomRefDoc, {
       players: playersUpdate,
       nightState,
       witchUsage: witchUsageUpdate,
+      seerHistory,
       logs,
     });
     await resolveNightAndGoToDay({
@@ -242,62 +313,78 @@ export async function submitNightAction(step, stepData) {
       players: playersUpdate,
       nightState,
       witchUsage: witchUsageUpdate,
+      seerHistory,
       logs,
     });
   }
 }
 
-/**
- * Resolve toàn bộ đêm: tính ai chết, cập nhật alive, log, check win, rồi chuyển sang Day
- */
 async function resolveNightAndGoToDay(roomData) {
   const room = roomData || currentRoom;
   const round = room.round;
-  const nightState = room.nightState;
-  const { updatedPlayers, deaths } = resolveNight(room.players, nightState);
+  const { updatedPlayers, deaths } = resolveNight(room.players, room.nightState);
 
   let logs = [...room.logs];
 
   if (deaths.length === 0) {
-    logs.push(makeLogEntry(round, "night", `🌙 Đêm thứ ${round}: Không có ai chết!`, "death"));
+    logs.push(makeLogEntry(round, "night", `🌙 Đêm thứ ${round}: Bình yên, không ai chết!`, "death"));
   } else {
     deaths.forEach((d) => {
-      logs.push(
-        makeLogEntry(round, "night", `💀 ${d.name} đã chết — ${DEATH_CAUSE_LABEL_VI[d.cause]}`, "death")
-      );
+      logs.push(makeLogEntry(round, "night", `💀 ${d.name} đã chết — ${DEATH_CAUSE_LABEL_VI[d.cause]}`, "death"));
     });
   }
 
-  const winner = checkWinCondition(updatedPlayers);
-
-  if (winner) {
-    logs.push(makeLogEntry(round, "night", WIN_LABEL_VI[winner], "system"));
+  // Check if Hunter died and needs to pull someone
+  const hunterDeath = deaths.find((d) => updatedPlayers[d.id]?.role === "hunter" || room.players[d.id]?.role === "hunter");
+  if (hunterDeath) {
+    const winner = checkWinCondition(updatedPlayers);
+    if (winner) {
+      logs.push(makeLogEntry(round, "night", WIN_LABEL_VI[winner], "system"));
+      await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", nightStep: null, winner, logs });
+      playSound("death");
+      return;
+    }
+    // Pause for hunter action
     await updateDoc(roomRefDoc, {
       players: updatedPlayers,
-      phase: "ended",
       nightStep: null,
-      winner,
+      hunterPending: { hunterId: hunterDeath.id, phase: "night", round },
       logs,
     });
+    return;
+  }
+
+  // Check cursed wolf role change
+  const curseTarget = room.nightState?.cursed_wolf?.target;
+  if (curseTarget && updatedPlayers[curseTarget] && updatedPlayers[curseTarget].role === "werewolf") {
+    logs.push(makeLogEntry(round, "night", `🌀 Sói Nguyền đã biến ${updatedPlayers[curseTarget].name} thành Ma Sói!`, "death"));
+  }
+
+  const winner = checkWinCondition(updatedPlayers);
+  if (winner) {
+    logs.push(makeLogEntry(round, "night", WIN_LABEL_VI[winner], "system"));
+    await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", nightStep: null, winner, logs });
     playSound("death");
     return;
   }
 
-  logs.push(makeLogEntry(round, "day", `☀️ Ngày thứ ${round} bắt đầu. Hãy thảo luận và vote!`, "system"));
+  const count = Object.keys(updatedPlayers).length;
+  const timerDuration = count <= 11 ? 180 : count <= 15 ? 300 : 420;
+  logs.push(makeLogEntry(round, "day", `☀️ Ngày thứ ${round} bắt đầu. Thảo luận và vote!`, "system"));
 
   await updateDoc(roomRefDoc, {
     players: updatedPlayers,
     phase: "day",
     nightStep: null,
     dayVotes: {},
+    timerDuration,
+    timerEndAt: null,
+    timerPhase: "day",
     logs,
   });
   playSound("day");
 }
 
-/**
- * Admin bấm "Next Phase" ở Day -> resolve vote -> qua Night round kế tiếp (hoặc kết thúc)
- */
 export async function resolveDayAndGoToNight() {
   if (!currentRoom) return;
   const round = currentRoom.round;
@@ -308,38 +395,51 @@ export async function resolveDayAndGoToNight() {
   let playersAfterVote = currentRoom.players;
 
   if (isTie) {
-    logs.push(makeLogEntry(round, "day", `⚖️ Vote bị hòa phiếu cao nhất — Không ai bị treo cổ.`, "vote"));
+    logs.push(makeLogEntry(round, "day", `⚖️ Hòa phiếu — Không ai bị treo cổ.`, "vote"));
   } else if (!eliminatedId) {
-    logs.push(makeLogEntry(round, "day", `Không có phiếu vote nào — Không ai bị treo cổ.`, "vote"));
+    logs.push(makeLogEntry(round, "day", `Không có phiếu nào — Không ai bị treo cổ.`, "vote"));
   } else {
     const { updatedPlayers, deaths } = applyDayVoteResult(currentRoom.players, eliminatedId);
     playersAfterVote = updatedPlayers;
     deaths.forEach((d) => {
-      logs.push(
-        makeLogEntry(round, "day", `💀 ${d.name} đã chết — ${DEATH_CAUSE_LABEL_VI[d.cause]}`, "death")
-      );
+      logs.push(makeLogEntry(round, "day", `💀 ${d.name} đã chết — ${DEATH_CAUSE_LABEL_VI[d.cause]}`, "death"));
     });
+
+    // Hunter triggered?
+    const hunterDeath = deaths.find((d) => currentRoom.players[d.id]?.role === "hunter");
+    if (hunterDeath) {
+      const winner = checkWinCondition(playersAfterVote);
+      if (winner) {
+        logs.push(makeLogEntry(round, "day", WIN_LABEL_VI[winner], "system"));
+        await updateDoc(roomRefDoc, { players: playersAfterVote, phase: "ended", winner, logs });
+        playSound("death");
+        return;
+      }
+      await updateDoc(roomRefDoc, {
+        players: playersAfterVote,
+        hunterPending: { hunterId: hunterDeath.id, phase: "day", round },
+        logs,
+      });
+      clearTimer();
+      return;
+    }
   }
 
   const winner = checkWinCondition(playersAfterVote);
   if (winner) {
     logs.push(makeLogEntry(round, "day", WIN_LABEL_VI[winner], "system"));
-    await updateDoc(roomRefDoc, {
-      players: playersAfterVote,
-      phase: "ended",
-      winner,
-      logs,
-    });
+    await updateDoc(roomRefDoc, { players: playersAfterVote, phase: "ended", winner, logs });
     playSound("death");
     return;
   }
 
-  // Sang đêm kế tiếp
   const nextRound = round + 1;
   const nightState = emptyNightState(nextRound);
-  const steps = getNightStepsForRound(nextRound);
+  const presentRoles = getPresentRoles(playersAfterVote);
+  const steps = getNightStepsForRound(nextRound, presentRoles);
 
   logs.push(makeLogEntry(nextRound, "night", `🌙 Đêm thứ ${nextRound} bắt đầu...`, "system"));
+  clearTimer();
 
   await updateDoc(roomRefDoc, {
     players: playersAfterVote,
@@ -348,13 +448,74 @@ export async function resolveDayAndGoToNight() {
     nightStep: steps[0],
     nightState,
     dayVotes: {},
+    timerEndAt: null,
+    timerPhase: null,
     logs,
   });
   playSound("night");
 }
 
 // ============================================================
-// 4. PLAYER MANAGEMENT (admin xem/chỉnh sửa danh sách người chơi trong lobby)
+// HUNTER ACTION
+// ============================================================
+
+export async function submitHunterKill(targetId) {
+  if (!currentRoom || !currentRoom.hunterPending) return;
+  const { hunterId, phase, round } = currentRoom.hunterPending;
+  const { updatedPlayers, deaths } = applyHunterKill(currentRoom.players, hunterId, targetId);
+
+  let logs = [...currentRoom.logs];
+  deaths.forEach((d) => {
+    logs.push(makeLogEntry(round, phase, `💀 ${d.name} đã chết — ${DEATH_CAUSE_LABEL_VI[d.cause]}`, "death"));
+  });
+
+  const winner = checkWinCondition(updatedPlayers);
+  if (winner) {
+    logs.push(makeLogEntry(round, phase, WIN_LABEL_VI[winner], "system"));
+    await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", winner, hunterPending: null, logs });
+    playSound("death");
+    return;
+  }
+
+  if (phase === "night") {
+    // Continue to day
+    const count = Object.keys(updatedPlayers).length;
+    const timerDuration = count <= 11 ? 180 : count <= 15 ? 300 : 420;
+    logs.push(makeLogEntry(round, "day", `☀️ Ngày thứ ${round} bắt đầu.`, "system"));
+    await updateDoc(roomRefDoc, {
+      players: updatedPlayers,
+      phase: "day",
+      dayVotes: {},
+      hunterPending: null,
+      timerDuration,
+      timerEndAt: null,
+      timerPhase: "day",
+      logs,
+    });
+  } else {
+    // Continue to next night
+    const nextRound = round + 1;
+    const nightState = emptyNightState(nextRound);
+    const presentRoles = getPresentRoles(updatedPlayers);
+    const steps = getNightStepsForRound(nextRound, presentRoles);
+    logs.push(makeLogEntry(nextRound, "night", `🌙 Đêm thứ ${nextRound} bắt đầu...`, "system"));
+    await updateDoc(roomRefDoc, {
+      players: updatedPlayers,
+      phase: "night",
+      round: nextRound,
+      nightStep: steps[0],
+      nightState,
+      dayVotes: {},
+      hunterPending: null,
+      timerEndAt: null,
+      logs,
+    });
+    playSound("night");
+  }
+}
+
+// ============================================================
+// 4. PLAYER MANAGEMENT
 // ============================================================
 
 export async function kickPlayer(playerId) {
@@ -365,7 +526,88 @@ export async function kickPlayer(playerId) {
 }
 
 // ============================================================
-// 5. SOUND
+// 5. TIMER
+// ============================================================
+
+function clearTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+  timerRunning = false;
+  timerRemaining = 0;
+}
+
+export async function startTimer() {
+  if (!currentRoom) return;
+  const duration = currentRoom.timerDuration || 180;
+  const endAt = Date.now() + duration * 1000;
+  await updateDoc(roomRefDoc, { timerEndAt: endAt, timerRunning: true });
+  runLocalTimer(endAt);
+}
+
+export async function pauseTimer() {
+  if (!currentRoom) return;
+  clearTimer();
+  const remaining = currentRoom.timerEndAt ? Math.max(0, Math.floor((currentRoom.timerEndAt - Date.now()) / 1000)) : 0;
+  await updateDoc(roomRefDoc, { timerEndAt: null, timerRunning: false, timerDuration: remaining });
+  renderTimerControls();
+}
+
+export async function skipDiscussion() {
+  clearTimer();
+  await updateDoc(roomRefDoc, { timerEndAt: null, timerRunning: false });
+  renderDayVotePanel();
+}
+
+function runLocalTimer(endAt) {
+  clearTimer();
+  timerRunning = true;
+  timerInterval = setInterval(() => {
+    const remaining = Math.max(0, Math.floor((endAt - Date.now()) / 1000));
+    renderTimerDisplay(remaining);
+    if (remaining <= 0) {
+      clearTimer();
+      renderTimerDisplay(0);
+    }
+  }, 500);
+}
+
+function renderTimerDisplay(seconds) {
+  const el = $("#timerDisplay");
+  if (!el) return;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  el.textContent = `⏱️ ${m}:${s.toString().padStart(2, "0")}`;
+  el.className = `timer-display ${seconds <= 30 ? "timer-urgent" : ""}`;
+}
+
+function renderTimerControls() {
+  const el = $("#timerControls");
+  if (!el) return;
+  const endAt = currentRoom?.timerEndAt;
+  const isRunning = endAt && endAt > Date.now();
+
+  if (isRunning) runLocalTimer(endAt);
+
+  el.innerHTML = `
+    <div id="timerDisplay" class="timer-display">⏱️ ${formatTimerDuration(currentRoom?.timerDuration || 180)}</div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn-big btn-confirm" onclick="window._adminAction('startTimer')" ${isRunning ? "disabled" : ""}>▶ Bắt đầu thảo luận</button>
+      <button class="btn-big btn-skip" onclick="window._adminAction('pauseTimer')" ${!isRunning ? "disabled" : ""}>⏸ Tạm dừng</button>
+      <button class="btn-big btn-danger" onclick="window._adminAction('skipDiscussion')">⏭ Skip</button>
+    </div>
+  `;
+}
+
+function formatTimerDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+// ============================================================
+// 6. SOUND
 // ============================================================
 const SOUNDS = {
   start: "assets/start.mp3",
@@ -375,16 +617,12 @@ const SOUNDS = {
 };
 function playSound(key) {
   try {
-    const audio = new Audio(SOUNDS[key]);
-    audio.volume = 0.6;
-    audio.play().catch(() => {});
-  } catch (e) {
-    /* ignore audio errors silently */
-  }
+    new Audio(SOUNDS[key]).play().catch(() => {});
+  } catch (e) {}
 }
 
 // ============================================================
-// 6. RENDER UI (đọc currentRoom -> vẽ lại DOM)
+// 7. RENDER
 // ============================================================
 
 function renderAll() {
@@ -393,17 +631,26 @@ function renderAll() {
   renderPhaseBanner();
   renderNightActionPanel();
   renderDayVotePanel();
+  renderHunterPanel();
   renderLogs();
   renderWinScreen();
   renderDebugToggle();
   renderTestModeToggle();
+  renderGameSetupPanel();
+  renderChatPanel();
+
+  // Sync timer from Firestore if running
+  if (currentRoom.timerEndAt && currentRoom.timerEndAt > Date.now()) {
+    runLocalTimer(currentRoom.timerEndAt);
+  }
 }
 
 function renderPhaseBanner() {
   const banner = $("#phaseBanner");
   const { phase, round } = currentRoom;
+  const count = Object.keys(currentRoom.players || {}).length;
   const labels = {
-    lobby: `🛋️ Phòng chờ (${Object.keys(currentRoom.players || {}).length}/11 người)`,
+    lobby: `🛋️ Phòng chờ (${count}/${currentRoom.settings?.playerCount || "?"} người)`,
     night: `🌙 ĐÊM ${round}`,
     day: `☀️ NGÀY ${round}`,
     ended: `🏁 KẾT THÚC`,
@@ -416,13 +663,21 @@ function renderPlayerList() {
   const container = $("#playerListAdmin");
   container.innerHTML = "";
   const players = currentRoom.players || {};
+  const votes = currentRoom.dayVotes || {};
+
+  // Count votes per player
+  const voteTally = {};
+  Object.values(votes).forEach((tid) => { if (tid) voteTally[tid] = (voteTally[tid] || 0) + 1; });
+
   Object.entries(players).forEach(([id, p]) => {
     const div = document.createElement("div");
     div.className = `player-row ${p.alive === false ? "dead" : ""}`;
     const roleText = p.role ? `(${ROLE_LABEL_VI[p.role]})` : "";
+    const voteText = currentRoom.phase === "day" && voteTally[id] ? `🗳️ ${voteTally[id]}` : "";
+    const loverName = p.loverPartnerId && players[p.loverPartnerId] ? `💞${players[p.loverPartnerId].name}` : "";
     div.innerHTML = `
-      <span class="player-name">${p.alive === false ? "💀" : "🟢"} ${p.name} ${p.isLover ? "💞" : ""}</span>
-      <span class="player-role">${roleText}</span>
+      <span class="player-name">${p.alive === false ? "💀" : "🟢"} ${p.name} ${loverName}</span>
+      <span class="player-role">${roleText} ${voteText}</span>
       ${currentRoom.phase === "lobby" ? `<button class="btn-kick" data-id="${id}">Xóa</button>` : ""}
     `;
     container.appendChild(div);
@@ -436,7 +691,7 @@ function renderPlayerList() {
 function renderNightActionPanel() {
   const panel = $("#nightActionPanel");
   panel.innerHTML = "";
-  if (currentRoom.phase !== "night" || !currentRoom.nightStep) {
+  if (currentRoom.phase !== "night" || !currentRoom.nightStep || currentRoom.hunterPending) {
     panel.classList.add("hidden");
     return;
   }
@@ -447,35 +702,48 @@ function renderNightActionPanel() {
   const alive = getAlivePlayers(currentRoom.players);
 
   const stepTitles = {
-    cupid: "💘 BƯỚC 1: Cupid chọn 2 người yêu nhau",
-    guardian: "🛡️ BƯỚC 2: Bảo Vệ chọn người để bảo vệ",
-    werewolf: "🐺 BƯỚC 3: Sói chọn nạn nhân",
-    seer: "🔮 BƯỚC 4: Tiên Tri chọn người để soi",
-    witch: "🧪 BƯỚC 5: Phù Thủy quyết định cứu / độc",
+    cupid: "💘 Cupid chọn 2 người yêu nhau",
+    thief: "🃏 Ăn Trộm chọn vai trò",
+    guardian: "🛡️ Bảo Vệ chọn người bảo vệ",
+    werewolf: "🐺 Sói chọn nạn nhân",
+    cursed_wolf: "🌀 Sói Nguyền biến 1 người thành Sói",
+    seer: "🔮 Tiên Tri soi 1 người",
+    witch: "🧪 Phù Thủy hành động",
+    flute_player: "🎶 Thổi Sáo ru ngủ 2 người",
   };
 
   const title = document.createElement("h3");
-  title.textContent = `${stepTitles[step]} (Đêm ${round})`;
+  title.textContent = `${stepTitles[step] || step} (Đêm ${round})`;
   panel.appendChild(title);
 
   if (step === "cupid") {
     panel.appendChild(buildMultiSelect(alive, 2, (selected) => {
       submitNightAction("cupid", { lovers: selected });
-    }));
+    }, "Xác nhận ghép cặp"));
+  } else if (step === "thief") {
+    panel.appendChild(buildThiefPanel(alive));
   } else if (step === "guardian") {
     panel.appendChild(buildSingleSelect(alive, "Bảo vệ", (id) => {
       submitNightAction("guardian", { protect: id });
     }, true));
   } else if (step === "werewolf") {
-    panel.appendChild(buildSingleSelect(alive, "Sói cắn", (id) => {
+    const nonWolves = alive.filter((p) => p.role !== "werewolf" && p.role !== "cursed_wolf");
+    panel.appendChild(buildSingleSelect(nonWolves, "Sói cắn", (id) => {
       submitNightAction("werewolf", { target: id });
     }, false));
+  } else if (step === "cursed_wolf") {
+    const targets = alive.filter((p) => p.role !== "werewolf" && p.role !== "cursed_wolf");
+    panel.appendChild(buildSingleSelect(targets, "Nguyền", (id) => {
+      submitNightAction("cursed_wolf", { target: id });
+    }, true));
   } else if (step === "seer") {
-    panel.appendChild(buildSingleSelect(alive, "Soi vai trò", (id) => {
-      submitNightAction("seer", { target: id });
-    }, false));
+    panel.appendChild(buildSeerPanel(alive));
   } else if (step === "witch") {
     panel.appendChild(buildWitchPanel(alive));
+  } else if (step === "flute_player") {
+    panel.appendChild(buildMultiSelect(alive.filter(p => p.role !== "flute_player"), 2, (selected) => {
+      submitNightAction("flute_player", { targets: selected });
+    }, "Xác nhận ru ngủ", true));
   }
 }
 
@@ -503,10 +771,7 @@ function buildSingleSelect(alivePlayers, btnLabel, onConfirm, allowSkip) {
   confirmBtn.className = "btn-big btn-confirm";
   confirmBtn.textContent = `✅ Xác nhận ${btnLabel}`;
   confirmBtn.onclick = () => {
-    if (!selectedId) {
-      alert("Vui lòng chọn 1 người!");
-      return;
-    }
+    if (!selectedId) { alert("Vui lòng chọn 1 người!"); return; }
     onConfirm(selectedId);
   };
   actions.appendChild(confirmBtn);
@@ -514,7 +779,7 @@ function buildSingleSelect(alivePlayers, btnLabel, onConfirm, allowSkip) {
   if (allowSkip) {
     const skipBtn = document.createElement("button");
     skipBtn.className = "btn-big btn-skip";
-    skipBtn.textContent = "⏭️ Không bảo vệ ai";
+    skipBtn.textContent = "⏭️ Bỏ qua";
     skipBtn.onclick = () => onConfirm(null);
     actions.appendChild(skipBtn);
   }
@@ -523,7 +788,7 @@ function buildSingleSelect(alivePlayers, btnLabel, onConfirm, allowSkip) {
   return wrap;
 }
 
-function buildMultiSelect(alivePlayers, maxCount, onConfirm) {
+function buildMultiSelect(alivePlayers, maxCount, onConfirm, btnLabel, allowSkip = false) {
   const wrap = document.createElement("div");
   wrap.className = "select-wrap";
   let selected = [];
@@ -537,10 +802,7 @@ function buildMultiSelect(alivePlayers, maxCount, onConfirm) {
         selected = selected.filter((x) => x !== p.id);
         opt.classList.remove("active");
       } else {
-        if (selected.length >= maxCount) {
-          alert(`Chỉ chọn tối đa ${maxCount} người!`);
-          return;
-        }
+        if (selected.length >= maxCount) { alert(`Chỉ chọn tối đa ${maxCount} người!`); return; }
         selected.push(p.id);
         opt.classList.add("active");
       }
@@ -548,17 +810,94 @@ function buildMultiSelect(alivePlayers, maxCount, onConfirm) {
     wrap.appendChild(opt);
   });
 
+  const actions = document.createElement("div");
+  actions.className = "action-row";
+
   const confirmBtn = document.createElement("button");
   confirmBtn.className = "btn-big btn-confirm";
-  confirmBtn.textContent = "✅ Xác nhận ghép cặp";
+  confirmBtn.textContent = `✅ ${btnLabel || "Xác nhận"}`;
   confirmBtn.onclick = () => {
-    if (selected.length !== maxCount) {
-      alert(`Cần chọn đúng ${maxCount} người!`);
-      return;
-    }
+    if (selected.length < 1) { alert(`Cần chọn ít nhất 1 người!`); return; }
     onConfirm(selected);
   };
+  actions.appendChild(confirmBtn);
+
+  if (allowSkip) {
+    const skipBtn = document.createElement("button");
+    skipBtn.className = "btn-big btn-skip";
+    skipBtn.textContent = "⏭️ Bỏ qua";
+    skipBtn.onclick = () => onConfirm([]);
+    actions.appendChild(skipBtn);
+  }
+
+  wrap.appendChild(actions);
+  return wrap;
+}
+
+function buildThiefPanel(alivePlayers) {
+  const wrap = document.createElement("div");
+  wrap.className = "select-wrap";
+
+  const thiefPlayer = getAlivePlayers(currentRoom.players).find(p => p.role === "thief");
+  const options = currentRoom.thiefOptions || ["villager", "villager"];
+
+  const label = document.createElement("p");
+  label.textContent = `🃏 ${thiefPlayer?.name || "Ăn Trộm"} chọn 1 trong 2 vai trò sau:`;
+  wrap.appendChild(label);
+
+  let chosenRole = null;
+  options.forEach((role, i) => {
+    const btn = document.createElement("button");
+    btn.className = "select-option";
+    btn.textContent = `${i+1}. ${ROLE_LABEL_VI[role] || role}`;
+    btn.onclick = () => {
+      wrap.querySelectorAll(".select-option").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      chosenRole = role;
+    };
+    wrap.appendChild(btn);
+  });
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.className = "btn-big btn-confirm";
+  confirmBtn.textContent = "✅ Xác nhận";
+  confirmBtn.onclick = () => {
+    if (!chosenRole) { alert("Chọn 1 vai trò!"); return; }
+    submitNightAction("thief", { thiefId: thiefPlayer?.id, chosenRole });
+  };
   wrap.appendChild(confirmBtn);
+
+  const skipBtn = document.createElement("button");
+  skipBtn.className = "btn-big btn-skip";
+  skipBtn.textContent = "⏭️ Giữ nguyên vai Ăn Trộm";
+  skipBtn.onclick = () => submitNightAction("thief", { thiefId: null, chosenRole: null });
+  wrap.appendChild(skipBtn);
+
+  return wrap;
+}
+
+function buildSeerPanel(alivePlayers) {
+  const wrap = document.createElement("div");
+  wrap.className = "select-wrap";
+
+  // Show seer history
+  const seerHistory = currentRoom.seerHistory || {};
+  if (Object.keys(seerHistory).length > 0) {
+    const histDiv = document.createElement("div");
+    histDiv.className = "seer-history";
+    histDiv.innerHTML = "<strong>🔮 Lịch sử soi (chỉ Admin thấy):</strong>";
+    Object.entries(seerHistory).sort((a, b) => a[0] - b[0]).forEach(([round, entry]) => {
+      const row = document.createElement("div");
+      row.className = "seer-history-row";
+      row.innerHTML = `Đêm ${round}: <b>${entry.targetName}</b> → ${entry.isWerewolf ? "🐺 LÀ SÓI" : "👤 Không phải sói"}`;
+      histDiv.appendChild(row);
+    });
+    wrap.appendChild(histDiv);
+  }
+
+  wrap.appendChild(buildSingleSelect(alivePlayers, "Soi", (id) => {
+    submitNightAction("seer", { target: id });
+  }, false));
 
   return wrap;
 }
@@ -571,110 +910,176 @@ function buildWitchPanel(alivePlayers) {
   const wolfTargetId = nightState.werewolf?.target;
   const wolfTarget = wolfTargetId ? currentRoom.players[wolfTargetId] : null;
   const witchUsage = currentRoom.witchUsage || { healUsed: false, poisonUsed: false };
-  const healUsed = witchUsage.healUsed;
-  const poisonUsed = witchUsage.poisonUsed;
 
   const info = document.createElement("p");
   info.className = "witch-info";
-  info.textContent = wolfTarget
-    ? `🐺 Sói đã chọn cắn: ${wolfTarget.name}`
-    : "🐺 Sói không cắn ai đêm nay.";
+  info.textContent = wolfTarget ? `🐺 Sói cắn: ${wolfTarget.name}` : "🐺 Sói không cắn ai.";
   wrap.appendChild(info);
 
   let doSave = false;
   let poisonTarget = null;
 
-  if (wolfTarget && !healUsed) {
+  if (wolfTarget && !witchUsage.healUsed) {
     const saveBtn = document.createElement("button");
     saveBtn.className = "select-option";
     saveBtn.textContent = `💊 Cứu ${wolfTarget.name}`;
-    saveBtn.onclick = () => {
-      doSave = !doSave;
-      saveBtn.classList.toggle("active");
-    };
+    saveBtn.onclick = () => { doSave = !doSave; saveBtn.classList.toggle("active"); };
     wrap.appendChild(saveBtn);
-  } else if (healUsed) {
-    const usedNote = document.createElement("p");
-    usedNote.className = "note-disabled";
-    usedNote.textContent = "(Đã dùng thuốc cứu trước đó — không còn lượt cứu)";
-    wrap.appendChild(usedNote);
+  } else if (witchUsage.healUsed) {
+    const n = document.createElement("p");
+    n.className = "note-disabled";
+    n.textContent = "(Đã dùng thuốc cứu)";
+    wrap.appendChild(n);
   }
 
-  if (!poisonUsed) {
-    const poisonLabel = document.createElement("p");
-    poisonLabel.textContent = "☠️ Chọn người để đầu độc (tùy chọn):";
-    wrap.appendChild(poisonLabel);
+  if (!witchUsage.poisonUsed) {
+    const pl = document.createElement("p");
+    pl.textContent = "☠️ Đầu độc (tùy chọn):";
+    wrap.appendChild(pl);
 
-    const poisonSelect = document.createElement("div");
-    poisonSelect.className = "select-wrap";
-    alivePlayers
-      .filter((p) => p.id !== wolfTargetId) // witch không độc trùng người sói vừa cắn (tránh trùng lặp vô lý)
-      .forEach((p) => {
-        const opt = document.createElement("button");
-        opt.className = "select-option";
-        opt.textContent = p.name;
-        opt.onclick = () => {
-          if (poisonTarget === p.id) {
-            poisonTarget = null;
-            opt.classList.remove("active");
-          } else {
-            poisonSelect.querySelectorAll(".select-option").forEach((b) => b.classList.remove("active"));
-            poisonTarget = p.id;
-            opt.classList.add("active");
-          }
-        };
-        poisonSelect.appendChild(opt);
-      });
-    wrap.appendChild(poisonSelect);
+    const ps = document.createElement("div");
+    ps.className = "select-wrap";
+    alivePlayers.filter((p) => p.id !== wolfTargetId).forEach((p) => {
+      const opt = document.createElement("button");
+      opt.className = "select-option";
+      opt.textContent = p.name;
+      opt.onclick = () => {
+        if (poisonTarget === p.id) {
+          poisonTarget = null;
+          opt.classList.remove("active");
+        } else {
+          ps.querySelectorAll(".select-option").forEach((b) => b.classList.remove("active"));
+          poisonTarget = p.id;
+          opt.classList.add("active");
+        }
+      };
+      ps.appendChild(opt);
+    });
+    wrap.appendChild(ps);
   } else {
-    const usedNote = document.createElement("p");
-    usedNote.className = "note-disabled";
-    usedNote.textContent = "(Đã dùng thuốc độc trước đó — không còn lượt độc)";
-    wrap.appendChild(usedNote);
+    const n = document.createElement("p");
+    n.className = "note-disabled";
+    n.textContent = "(Đã dùng thuốc độc)";
+    wrap.appendChild(n);
   }
 
   const confirmBtn = document.createElement("button");
   confirmBtn.className = "btn-big btn-confirm";
-  confirmBtn.textContent = "✅ Xác nhận hành động Phù Thủy";
-  confirmBtn.onclick = () => {
-    submitNightAction("witch", { save: doSave, poisonTarget });
-  };
+  confirmBtn.textContent = "✅ Xác nhận Phù Thủy";
+  confirmBtn.onclick = () => submitNightAction("witch", { save: doSave, poisonTarget });
   wrap.appendChild(confirmBtn);
 
   const skipBtn = document.createElement("button");
   skipBtn.className = "btn-big btn-skip";
-  skipBtn.textContent = "⏭️ Không làm gì cả";
+  skipBtn.textContent = "⏭️ Không làm gì";
   skipBtn.onclick = () => submitNightAction("witch", { save: false, poisonTarget: null });
   wrap.appendChild(skipBtn);
 
   return wrap;
 }
 
-function renderDayVotePanel() {
-  const panel = $("#dayVotePanel");
-  if (currentRoom.phase !== "day") {
+function renderHunterPanel() {
+  const panel = $("#hunterPanel");
+  if (!panel) return;
+  const pending = currentRoom.hunterPending;
+
+  if (!pending) {
     panel.classList.add("hidden");
     return;
   }
   panel.classList.remove("hidden");
-  panel.innerHTML = "<h3>🗳️ Kết quả vote hiện tại (realtime từ người chơi)</h3>";
+  const hunter = currentRoom.players[pending.hunterId];
+  panel.innerHTML = `<h3>🏹 Thợ Săn "${hunter?.name || "?"}" vừa chết! Chọn người kéo theo:</h3>`;
+
+  const alive = getAlivePlayers(currentRoom.players).filter(p => p.id !== pending.hunterId);
+  const wrap = document.createElement("div");
+  wrap.className = "select-wrap";
+  let selectedId = null;
+
+  alive.forEach((p) => {
+    const btn = document.createElement("button");
+    btn.className = "select-option";
+    btn.textContent = p.name;
+    btn.onclick = () => {
+      wrap.querySelectorAll(".select-option").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      selectedId = p.id;
+    };
+    wrap.appendChild(btn);
+  });
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.className = "btn-big btn-confirm";
+  confirmBtn.textContent = "🏹 Xác nhận kéo theo";
+  confirmBtn.onclick = () => {
+    if (!selectedId) { alert("Chọn người Thợ Săn kéo!"); return; }
+    submitHunterKill(selectedId);
+  };
+  wrap.appendChild(confirmBtn);
+
+  const skipBtn = document.createElement("button");
+  skipBtn.className = "btn-big btn-skip";
+  skipBtn.textContent = "⏭️ Không kéo ai";
+  skipBtn.onclick = () => submitHunterKill(null);
+  wrap.appendChild(skipBtn);
+
+  panel.appendChild(wrap);
+}
+
+function renderDayVotePanel() {
+  const panel = $("#dayVotePanel");
+  if (currentRoom.phase !== "day" || currentRoom.hunterPending) {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  panel.innerHTML = "<h3>🗳️ Kết quả vote (realtime)</h3>";
+
+  // Timer controls
+  const timerWrap = document.createElement("div");
+  timerWrap.id = "timerControls";
+  panel.appendChild(timerWrap);
+  renderTimerControls();
 
   const votes = currentRoom.dayVotes || {};
+  const alive = getAlivePlayers(currentRoom.players);
+
+  // Sort by vote count desc
+  const voteRows = alive.map((p) => ({
+    ...p,
+    count: Object.values(votes).filter((v) => v === p.id).length,
+  })).sort((a, b) => b.count - a.count);
+
   const tallyDiv = document.createElement("div");
   tallyDiv.className = "vote-tally";
-
-  const alive = getAlivePlayers(currentRoom.players);
-  alive.forEach((p) => {
-    const count = Object.values(votes).filter((v) => v === p.id).length;
+  voteRows.forEach((p) => {
     const row = document.createElement("div");
     row.className = "vote-row";
-    row.innerHTML = `<span>${p.name}</span><span class="vote-count">${count} phiếu</span>`;
+    const whoVoted = Object.entries(votes)
+      .filter(([, tid]) => tid === p.id)
+      .map(([vid]) => currentRoom.players[vid]?.name || "?")
+      .join(", ");
+    row.innerHTML = `
+      <span>${p.name}</span>
+      <span class="vote-count">${p.count} phiếu${whoVoted ? ` (${whoVoted})` : ""}</span>
+    `;
     tallyDiv.appendChild(row);
   });
   panel.appendChild(tallyDiv);
 
+  // Show who hasn't voted
+  const votedIds = new Set(Object.keys(votes).filter(k => votes[k]));
+  const notVoted = alive.filter(p => !votedIds.has(p.id));
+  if (notVoted.length > 0) {
+    const nv = document.createElement("p");
+    nv.className = "note-disabled";
+    nv.textContent = `Chưa vote: ${notVoted.map(p => p.name).join(", ")}`;
+    panel.appendChild(nv);
+  }
+
   const nextBtn = document.createElement("button");
   nextBtn.className = "btn-big btn-confirm";
+  nextBtn.style.marginTop = "12px";
   nextBtn.textContent = "➡️ KẾT THÚC VOTE & CHUYỂN ĐÊM";
   nextBtn.onclick = () => {
     if (confirm("Chốt kết quả vote và chuyển sang đêm tiếp theo?")) {
@@ -684,12 +1089,113 @@ function renderDayVotePanel() {
   panel.appendChild(nextBtn);
 }
 
+function renderGameSetupPanel() {
+  const panel = $("#gameSetupPanel");
+  if (!panel || currentRoom.phase !== "lobby") {
+    panel?.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+
+  const settings = currentRoom.settings || {};
+  const playerCount = Object.keys(currentRoom.players || {}).length;
+  const preset = getRolePreset(playerCount || 11, settings.roleOptions || {});
+  const roleList = buildRoleList(preset);
+
+  const wolves = roleList.filter(r => r === "werewolf" || r === "cursed_wolf").length;
+  const villagers = roleList.filter(r => ROLE_TEAM[r] === "village").length;
+  const thirds = roleList.filter(r => ROLE_TEAM[r] === "third").length;
+
+  panel.innerHTML = `
+    <h2>⚙️ Cài đặt Game</h2>
+    <p class="note-disabled">Số người hiện tại: <strong>${playerCount}</strong> / Cần 8-20</p>
+    <div class="team-summary">
+      <span>🐺 Phe Sói: ${wolves}</span>
+      <span>👥 Phe Dân: ${villagers}</span>
+      ${thirds > 0 ? `<span>🟣 Phe 3: ${thirds}</span>` : ""}
+    </div>
+    <div class="role-options">
+      <p><strong>Vai trò tùy chọn:</strong></p>
+      ${buildRoleCheckboxes(settings.roleOptions || {})}
+    </div>
+    <p class="note-disabled" style="margin-top:8px">Vai trò trong preset: ${roleList.map(r => ROLE_LABEL_VI[r]).join(", ")}</p>
+  `;
+
+  // Bind checkboxes
+  panel.querySelectorAll(".role-option-cb").forEach(cb => {
+    cb.onchange = async () => {
+      const opts = { ...(currentRoom.settings?.roleOptions || {}) };
+      opts[cb.dataset.role] = cb.checked;
+      await updateDoc(roomRefDoc, { "settings.roleOptions": opts });
+    };
+  });
+}
+
+function buildRoleCheckboxes(options) {
+  const optionalRoles = [
+    { key: "cupid", label: "💘 Cupid" },
+    { key: "witch", label: "🧪 Phù Thủy" },
+    { key: "hunter", label: "🏹 Thợ Săn" },
+    { key: "elder", label: "👴 Già Làng" },
+    { key: "flute_player", label: "🎶 Thổi Sáo" },
+    { key: "thief", label: "🃏 Ăn Trộm" },
+    { key: "traitor", label: "🕵️ Phản Bội" },
+    { key: "cursed_wolf", label: "🌀 Sói Nguyền" },
+  ];
+  return optionalRoles.map(r => `
+    <label class="toggle-row">
+      <span>${r.label}</span>
+      <input type="checkbox" class="role-option-cb" data-role="${r.key}" ${options[r.key] ? "checked" : ""} />
+    </label>
+  `).join("");
+}
+
+function renderChatPanel() {
+  const panel = $("#chatPanel");
+  if (!panel) return;
+
+  const chat = currentRoom.chat || {};
+  const players = currentRoom.players || {};
+
+  // wolf chat
+  const wolfChatEl = $("#wolfChat");
+  if (wolfChatEl && currentRoom.phase === "night") {
+    wolfChatEl.classList.remove("hidden");
+    const messages = (chat.wolf || []).slice(-20);
+    const msgDiv = wolfChatEl.querySelector(".chat-messages");
+    if (msgDiv) {
+      msgDiv.innerHTML = messages.map(m =>
+        `<div class="chat-msg"><strong>${m.name}:</strong> ${escapeHtml(m.text)}</div>`
+      ).join("");
+      msgDiv.scrollTop = msgDiv.scrollHeight;
+    }
+  } else if (wolfChatEl) {
+    wolfChatEl.classList.add("hidden");
+  }
+
+  // admin can see all chats
+  const loverChatEl = $("#loverChat");
+  if (loverChatEl) {
+    const messages = (chat.lovers || []).slice(-20);
+    const msgDiv = loverChatEl.querySelector(".chat-messages");
+    if (msgDiv) {
+      msgDiv.innerHTML = messages.map(m =>
+        `<div class="chat-msg"><strong>${m.name}:</strong> ${escapeHtml(m.text)}</div>`
+      ).join("");
+      msgDiv.scrollTop = msgDiv.scrollHeight;
+    }
+    loverChatEl.classList.remove("hidden");
+  }
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function renderLogs() {
   const logPanel = $("#logPanel");
   const logs = currentRoom.logs || [];
-  logPanel.innerHTML = logs
-    .slice()
-    .reverse()
+  logPanel.innerHTML = logs.slice().reverse()
     .map((l) => `<div class="log-entry log-${l.type}">[V${l.round}] ${l.text}</div>`)
     .join("");
 }
@@ -698,8 +1204,17 @@ function renderWinScreen() {
   const winDiv = $("#winScreen");
   if (currentRoom.phase === "ended" && currentRoom.winner) {
     winDiv.classList.remove("hidden");
+    // Show full role reveal
+    const players = currentRoom.players || {};
+    const roleReveal = Object.values(players).map(p =>
+      `<div class="player-row ${p.alive ? "" : "dead"}">
+        <span>${p.alive === false ? "💀" : "🟢"} ${p.name}</span>
+        <span class="player-role">${ROLE_LABEL_VI[p.role] || "?"}</span>
+      </div>`
+    ).join("");
     winDiv.innerHTML = `
       <h1>${WIN_LABEL_VI[currentRoom.winner]}</h1>
+      <div style="margin:16px 0">${roleReveal}</div>
       <button id="btnResetAfterWin" class="btn-big btn-confirm">🔄 Chơi lại</button>
     `;
     $("#btnResetAfterWin").onclick = resetGame;
@@ -717,13 +1232,20 @@ function renderTestModeToggle() {
   const toggle = $("#testModeToggle");
   const testModeOn = !!currentRoom.settings?.testMode;
   if (toggle) toggle.checked = testModeOn;
-
   const badge = $("#testModeBadge");
   if (badge) badge.classList.toggle("hidden", !testModeOn);
 }
 
 // ============================================================
-// 7. BIND UI EVENTS (gọi khi DOM load xong, từ admin.html)
+// 8. GLOBAL ACTION BRIDGE (for onclick in rendered HTML)
+// ============================================================
+window._adminAction = (action) => {
+  const actions = { startTimer, pauseTimer, skipDiscussion };
+  if (actions[action]) actions[action]();
+};
+
+// ============================================================
+// 9. BIND UI EVENTS
 // ============================================================
 export function bindAdminUI() {
   $("#btnCreateRoom").onclick = createRoom;
@@ -733,7 +1255,7 @@ export function bindAdminUI() {
   };
   $("#btnStartGame").onclick = startGame;
   $("#btnResetGame").onclick = () => {
-    if (confirm("Reset toàn bộ game? Mọi vai trò và trạng thái sẽ bị xóa.")) resetGame();
+    if (confirm("Reset toàn bộ game?")) resetGame();
   };
   $("#debugToggle").onchange = toggleDebugMode;
   $("#testModeToggle").onchange = toggleTestMode;
