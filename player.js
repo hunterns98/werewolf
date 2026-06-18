@@ -7,7 +7,7 @@
 // Vai trò cá nhân được hiển thị từ players[myId].role do admin gán.
 // ============================================================
 
-import { db, doc, setDoc, updateDoc, onSnapshot } from "./firebase.js";
+import { db, doc, setDoc, getDoc, updateDoc, onSnapshot } from "./firebase.js";
 import { ROLE_LABEL_VI, getAlivePlayers, WIN_LABEL_VI } from "./game.js";
 
 let roomCode = null;
@@ -31,17 +31,41 @@ export async function joinRoom(code, name) {
   roomCode = code.trim().toUpperCase();
   roomRefDoc = doc(db, "rooms", roomCode);
 
-  // Lưu localStorage để refresh trang không mất danh tính
-  const storageKey = `maso_player_${roomCode}`;
-  const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+  // Đọc trước settings.testMode của phòng để quyết định cách lấy playerId.
+  // (Phải đọc TRƯỚC khi quyết định, vì 2 mode có hành vi khác nhau hoàn toàn.)
+  let testMode = false;
+  try {
+    const snap = await getDoc(roomRefDoc);
+    if (snap.exists()) {
+      testMode = !!snap.data().settings?.testMode;
+    }
+  } catch (e) {
+    // Nếu đọc lỗi (vd. mất mạng), fallback an toàn về Production để không phá danh tính cũ
+    testMode = false;
+  }
 
-  if (saved && saved.id) {
-    myId = saved.id;
-    myName = saved.name;
-  } else {
+  const storageKey = `maso_player_${roomCode}`;
+
+  if (testMode) {
+    // ========== TEST MODE ==========
+    // KHÔNG đọc/ghi localStorage -> mỗi lần join (hoặc refresh trang rồi join lại)
+    // luôn sinh playerId MỚI. Nhờ vậy nhiều "người chơi" có thể cùng dùng
+    // 1 trình duyệt/máy (nhiều tab) mà không bị nhận diện trùng nhau.
     myId = genPlayerId();
     myName = name.trim();
-    localStorage.setItem(storageKey, JSON.stringify({ id: myId, name: myName }));
+  } else {
+    // ========== PRODUCTION (mặc định) ==========
+    // Giữ nguyên logic cũ: mỗi thiết bị/trình duyệt chỉ là 1 player duy nhất,
+    // lưu trong localStorage để refresh trang không mất danh tính.
+    const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+    if (saved && saved.id) {
+      myId = saved.id;
+      myName = saved.name;
+    } else {
+      myId = genPlayerId();
+      myName = name.trim();
+      localStorage.setItem(storageKey, JSON.stringify({ id: myId, name: myName }));
+    }
   }
 
   // Thêm player vào room (merge, không đè người khác)
