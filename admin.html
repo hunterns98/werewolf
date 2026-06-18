@@ -26,6 +26,7 @@
 
       <div class="room-code-box">
         Mã phòng: <span id="roomCodeDisplay">----</span>
+        <div id="testModeBadge" class="test-mode-badge hidden">🧪 TEST MODE ĐANG BẬT — nhiều người chơi có thể dùng chung 1 trình duyệt</div>
       </div>
 
       <div id="phaseBanner" class="phase-banner phase-lobby">🛋️ Phòng chờ</div>
@@ -46,6 +47,14 @@
           <label for="debugToggle">🔍 Debug Mode (người chết xem được role tất cả)</label>
           <input type="checkbox" id="debugToggle" />
         </div>
+        <div class="toggle-row">
+          <label for="testModeToggle">🧪 Test Mode (cho phép nhiều người chơi / 1 trình duyệt)</label>
+          <input type="checkbox" id="testModeToggle" />
+        </div>
+        <p class="note-disabled">
+          • BẬT: mỗi lần mở tab mới hoặc refresh trang người chơi sẽ tạo danh tính (playerId) mới — dùng để bạn tự test nhiều "người chơi" trên cùng 1 máy/trình duyệt.<br />
+          • TẮT (mặc định, dùng khi chơi thật): mỗi thiết bị/trình duyệt chỉ được nhận diện là 1 người chơi duy nhất (lưu trong localStorage), refresh trang không bị mất danh tính.
+        </p>
       </div>
 
       <!-- NIGHT ACTION PANEL — từng bước theo thứ tự -->
