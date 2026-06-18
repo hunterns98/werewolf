@@ -45,7 +45,7 @@ export async function createRoom() {
     nightState: null,
     dayVotes: {},
     logs: [makeLogEntry(0, "lobby", "Phòng được tạo. Đang chờ người chơi vào...", "system")],
-    settings: { debugMode: false },
+    settings: { debugMode: false, testMode: false },
     winner: null,
     createdAt: serverTimestamp(),
   });
@@ -134,6 +134,22 @@ export async function toggleDebugMode() {
   if (!currentRoom) return;
   const newVal = !currentRoom.settings?.debugMode;
   await updateDoc(roomRefDoc, { "settings.debugMode": newVal });
+}
+
+/**
+ * Toggle Test Mode:
+ * - BẬT: player.js sẽ KHÔNG dùng localStorage để nhớ danh tính -> mỗi lần
+ *   join/refresh sinh playerId mới -> nhiều "người chơi" có thể dùng chung
+ *   1 trình duyệt/máy để admin tự test mà không cần nhiều thiết bị thật.
+ * - TẮT (mặc định/production): player.js dùng lại logic cũ — mỗi thiết bị
+ *   chỉ là 1 player duy nhất (lưu trong localStorage, refresh không mất).
+ * Field này nằm trong room.settings.testMode, player.js đọc field này
+ * (qua getDoc trước khi join) để quyết định cách lấy playerId.
+ */
+export async function toggleTestMode() {
+  if (!currentRoom) return;
+  const newVal = !currentRoom.settings?.testMode;
+  await updateDoc(roomRefDoc, { "settings.testMode": newVal });
 }
 
 // ============================================================
@@ -380,6 +396,7 @@ function renderAll() {
   renderLogs();
   renderWinScreen();
   renderDebugToggle();
+  renderTestModeToggle();
 }
 
 function renderPhaseBanner() {
@@ -696,6 +713,15 @@ function renderDebugToggle() {
   if (toggle) toggle.checked = !!currentRoom.settings?.debugMode;
 }
 
+function renderTestModeToggle() {
+  const toggle = $("#testModeToggle");
+  const testModeOn = !!currentRoom.settings?.testMode;
+  if (toggle) toggle.checked = testModeOn;
+
+  const badge = $("#testModeBadge");
+  if (badge) badge.classList.toggle("hidden", !testModeOn);
+}
+
 // ============================================================
 // 7. BIND UI EVENTS (gọi khi DOM load xong, từ admin.html)
 // ============================================================
@@ -710,6 +736,7 @@ export function bindAdminUI() {
     if (confirm("Reset toàn bộ game? Mọi vai trò và trạng thái sẽ bị xóa.")) resetGame();
   };
   $("#debugToggle").onchange = toggleDebugMode;
+  $("#testModeToggle").onchange = toggleTestMode;
 }
 
 window.addEventListener("DOMContentLoaded", bindAdminUI);
