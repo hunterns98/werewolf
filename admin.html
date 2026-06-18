@@ -9,13 +9,11 @@
 <body>
   <div class="container">
 
-    <!-- ========== JOIN / CREATE ROOM SCREEN ========== -->
+    <!-- ========== JOIN SCREEN ========== -->
     <div id="joinScreen" class="join-card">
       <h1>🐺 Ma Sói</h1>
       <p class="subtitle">Bảng điều khiển Quản Trò (Admin)</p>
-
       <button id="btnCreateRoom" class="btn-big btn-primary">➕ Tạo phòng mới</button>
-
       <p style="color: var(--text-muted); margin: 16px 0 8px;">— hoặc vào lại phòng cũ —</p>
       <input type="text" id="inputRoomCode" placeholder="Nhập mã phòng (VD: AB12)" />
       <button id="btnJoinRoom" class="btn-big btn-skip">🔑 Vào phòng</button>
@@ -26,7 +24,7 @@
 
       <div class="room-code-box">
         Mã phòng: <span id="roomCodeDisplay">----</span>
-        <div id="testModeBadge" class="test-mode-badge hidden">🧪 TEST MODE ĐANG BẬT — nhiều người chơi có thể dùng chung 1 trình duyệt</div>
+        <div id="testModeBadge" class="test-mode-badge hidden">🧪 TEST MODE ĐANG BẬT</div>
       </div>
 
       <div id="phaseBanner" class="phase-banner phase-lobby">🛋️ Phòng chờ</div>
@@ -34,37 +32,44 @@
       <!-- WIN SCREEN -->
       <div id="winScreen" class="hidden"></div>
 
-      <!-- ĐIỀU KHIỂN VÒNG CHƠI -->
+      <!-- HUNTER PENDING PANEL -->
+      <div id="hunterPanel" class="panel hidden"></div>
+
+      <!-- ĐIỀU KHIỂN -->
       <div class="panel">
         <h2>🎛️ Điều khiển</h2>
         <div class="btn-row">
           <button id="btnStartGame" class="btn-big btn-confirm">▶️ START GAME</button>
-        </div>
-        <div class="btn-row">
-          <button id="btnResetGame" class="btn-big btn-danger">🔄 RESET GAME</button>
+          <button id="btnResetGame" class="btn-big btn-danger">🔄 RESET</button>
         </div>
         <div class="toggle-row">
-          <label for="debugToggle">🔍 Debug Mode (người chết xem được role tất cả)</label>
+          <label for="debugToggle">🔍 Debug Mode</label>
           <input type="checkbox" id="debugToggle" />
         </div>
         <div class="toggle-row">
-          <label for="testModeToggle">🧪 Test Mode (cho phép nhiều người chơi / 1 trình duyệt)</label>
+          <label for="testModeToggle">🧪 Test Mode (nhiều người / 1 trình duyệt)</label>
           <input type="checkbox" id="testModeToggle" />
         </div>
-        <p class="note-disabled">
-          • BẬT: mỗi lần mở tab mới hoặc refresh trang người chơi sẽ tạo danh tính (playerId) mới — dùng để bạn tự test nhiều "người chơi" trên cùng 1 máy/trình duyệt.<br />
-          • TẮT (mặc định, dùng khi chơi thật): mỗi thiết bị/trình duyệt chỉ được nhận diện là 1 người chơi duy nhất (lưu trong localStorage), refresh trang không bị mất danh tính.
-        </p>
       </div>
 
-      <!-- NIGHT ACTION PANEL — từng bước theo thứ tự -->
-      <div id="nightActionPanel" class="panel hidden">
-        <!-- nội dung được admin.js render động -->
-      </div>
+      <!-- GAME SETUP (chỉ khi lobby) -->
+      <div id="gameSetupPanel" class="panel hidden"></div>
+
+      <!-- NIGHT ACTION PANEL -->
+      <div id="nightActionPanel" class="panel hidden"></div>
 
       <!-- DAY VOTE PANEL -->
-      <div id="dayVotePanel" class="panel hidden">
-        <!-- nội dung được admin.js render động -->
+      <div id="dayVotePanel" class="panel hidden"></div>
+
+      <!-- CHAT PANELS (admin readonly) -->
+      <div class="panel" id="wolfChat">
+        <h3>🐺 Sói Chat (Admin xem)</h3>
+        <div class="chat-messages" id="wolfChatMessages" style="max-height:160px;overflow-y:auto"></div>
+      </div>
+
+      <div class="panel" id="loverChat">
+        <h3>💞 Cặp Đôi Chat (Admin xem)</h3>
+        <div class="chat-messages" id="loverChatMessages" style="max-height:160px;overflow-y:auto"></div>
       </div>
 
       <!-- PLAYER LIST -->
@@ -75,13 +80,12 @@
 
       <!-- GAME LOG -->
       <div class="panel">
-        <h2>📜 Lịch sử game (Log)</h2>
+        <h2>📜 Lịch sử (Log bí mật Admin)</h2>
         <div id="logPanel" class="log-panel"></div>
       </div>
 
     </div>
   </div>
-
   <script type="module" src="admin.js"></script>
 </body>
 </html>
