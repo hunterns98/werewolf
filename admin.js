@@ -54,6 +54,7 @@ export async function createRoom() {
       roleMode: "auto",
       roleOptions: {},
       playerCount: 11,
+      gameMode: "adminControl", // "adminControl" | "playerAction"
     },
     winner: null,
     hunterPending: null,
@@ -195,6 +196,13 @@ export async function toggleTestMode() {
   await updateDoc(roomRefDoc, { "settings.testMode": !currentRoom.settings?.testMode });
 }
 
+export async function toggleGameMode() {
+  if (!currentRoom) return;
+  const current = currentRoom.settings?.gameMode || "adminControl";
+  const next = current === "adminControl" ? "playerAction" : "adminControl";
+  await updateDoc(roomRefDoc, { "settings.gameMode": next });
+}
+
 // ============================================================
 // 3. NIGHT ACTIONS
 // ============================================================
@@ -317,6 +325,25 @@ export async function submitNightAction(step, stepData) {
       logs,
     });
   }
+}
+
+// ============================================================
+// PLAYER ACTION MODE — process submitted player actions
+// Called from renderAll when gameMode === "playerAction" and
+// a playerNightAction arrives in Firestore that hasn't been processed yet.
+// ============================================================
+
+export async function processPlayerNightAction() {
+  if (!currentRoom) return;
+  const step = currentRoom.nightStep;
+  const action = currentRoom.playerNightAction;
+  if (!action || action.step !== step || action.processed) return;
+
+  // Mark as processing to prevent double-fire (optimistic lock via field)
+  await updateDoc(roomRefDoc, { "playerNightAction.processed": true });
+
+  // Delegate to existing submitNightAction with the player's data
+  await submitNightAction(action.step, action.data);
 }
 
 async function resolveNightAndGoToDay(roomData) {
@@ -636,12 +663,29 @@ function renderAll() {
   renderWinScreen();
   renderDebugToggle();
   renderTestModeToggle();
+  renderGameModeBadge();
   renderGameSetupPanel();
   renderChatPanel();
 
   // Sync timer from Firestore if running
   if (currentRoom.timerEndAt && currentRoom.timerEndAt > Date.now()) {
     runLocalTimer(currentRoom.timerEndAt);
+  }
+
+  // Player Action Mode: auto-process submitted player actions
+  if (currentRoom.settings?.gameMode === "playerAction") {
+    const action = currentRoom.playerNightAction;
+    if (action && action.step === currentRoom.nightStep && !action.processed) {
+      processPlayerNightAction();
+    }
+    // Hunter self-action
+    const hunterAction = currentRoom.playerHunterAction;
+    if (hunterAction && currentRoom.hunterPending && !hunterAction.processed) {
+      (async () => {
+        await updateDoc(roomRefDoc, { "playerHunterAction.processed": true });
+        await submitHunterKill(hunterAction.targetId);
+      })();
+    }
   }
 }
 
@@ -700,6 +744,7 @@ function renderNightActionPanel() {
   const step = currentRoom.nightStep;
   const round = currentRoom.round;
   const alive = getAlivePlayers(currentRoom.players);
+  const isPlayerActionMode = currentRoom.settings?.gameMode === "playerAction";
 
   const stepTitles = {
     cupid: "💘 Cupid chọn 2 người yêu nhau",
@@ -716,32 +761,70 @@ function renderNightActionPanel() {
   title.textContent = `${stepTitles[step] || step} (Đêm ${round})`;
   panel.appendChild(title);
 
+  // Player Action Mode: show waiting status + override toggle
+  if (isPlayerActionMode) {
+    // Find the player whose turn it is
+    const roleForStep = step === "cursed_wolf" ? ["cursed_wolf"] : step === "werewolf" ? ["werewolf", "cursed_wolf"] : [step];
+    const actionPlayer = alive.find(p => roleForStep.includes(p.role));
+    const playerName = actionPlayer?.name || "người chơi";
+
+    const waitDiv = document.createElement("div");
+    waitDiv.className = "player-action-waiting";
+    waitDiv.innerHTML = `
+      <div class="waiting-indicator">⏳ Đang chờ <strong>${escapeHtml(playerName)}</strong> thao tác trên điện thoại...</div>
+      <button class="btn-big btn-skip" id="btnToggleOverride" style="margin-top:10px">🎛️ Admin override thay thế</button>
+    `;
+    panel.appendChild(waitDiv);
+
+    // Show override panel (collapsed by default)
+    const overrideDiv = document.createElement("div");
+    overrideDiv.id = "adminOverridePanel";
+    overrideDiv.className = "hidden";
+    overrideDiv.innerHTML = `<p class="note-disabled" style="margin-bottom:8px">⚠️ Admin override — thao tác thay người chơi:</p>`;
+    panel.appendChild(overrideDiv);
+
+    const btn = panel.querySelector("#btnToggleOverride");
+    btn.onclick = () => {
+      overrideDiv.classList.toggle("hidden");
+      btn.textContent = overrideDiv.classList.contains("hidden") ? "🎛️ Admin override thay thế" : "✖️ Đóng override";
+    };
+
+    // Render the action UI inside override panel
+    renderNightActionControls(step, alive, overrideDiv);
+    return;
+  }
+
+  // Admin Control Mode: render directly
+  renderNightActionControls(step, alive, panel);
+}
+
+function renderNightActionControls(step, alive, container) {
   if (step === "cupid") {
-    panel.appendChild(buildMultiSelect(alive, 2, (selected) => {
+    container.appendChild(buildMultiSelect(alive, 2, (selected) => {
       submitNightAction("cupid", { lovers: selected });
     }, "Xác nhận ghép cặp"));
   } else if (step === "thief") {
-    panel.appendChild(buildThiefPanel(alive));
+    container.appendChild(buildThiefPanel(alive));
   } else if (step === "guardian") {
-    panel.appendChild(buildSingleSelect(alive, "Bảo vệ", (id) => {
+    container.appendChild(buildSingleSelect(alive, "Bảo vệ", (id) => {
       submitNightAction("guardian", { protect: id });
     }, true));
   } else if (step === "werewolf") {
     const nonWolves = alive.filter((p) => p.role !== "werewolf" && p.role !== "cursed_wolf");
-    panel.appendChild(buildSingleSelect(nonWolves, "Sói cắn", (id) => {
+    container.appendChild(buildSingleSelect(nonWolves, "Sói cắn", (id) => {
       submitNightAction("werewolf", { target: id });
     }, false));
   } else if (step === "cursed_wolf") {
     const targets = alive.filter((p) => p.role !== "werewolf" && p.role !== "cursed_wolf");
-    panel.appendChild(buildSingleSelect(targets, "Nguyền", (id) => {
+    container.appendChild(buildSingleSelect(targets, "Nguyền", (id) => {
       submitNightAction("cursed_wolf", { target: id });
     }, true));
   } else if (step === "seer") {
-    panel.appendChild(buildSeerPanel(alive));
+    container.appendChild(buildSeerPanel(alive));
   } else if (step === "witch") {
-    panel.appendChild(buildWitchPanel(alive));
+    container.appendChild(buildWitchPanel(alive));
   } else if (step === "flute_player") {
-    panel.appendChild(buildMultiSelect(alive.filter(p => p.role !== "flute_player"), 2, (selected) => {
+    container.appendChild(buildMultiSelect(alive.filter(p => p.role !== "flute_player"), 2, (selected) => {
       submitNightAction("flute_player", { targets: selected });
     }, "Xác nhận ru ngủ", true));
   }
@@ -991,7 +1074,36 @@ function renderHunterPanel() {
   const hunter = currentRoom.players[pending.hunterId];
   panel.innerHTML = `<h3>🏹 Thợ Săn "${hunter?.name || "?"}" vừa chết! Chọn người kéo theo:</h3>`;
 
+  const isPlayerActionMode = currentRoom.settings?.gameMode === "playerAction";
   const alive = getAlivePlayers(currentRoom.players).filter(p => p.id !== pending.hunterId);
+
+  // In playerAction mode, show waiting and collapse admin controls
+  if (isPlayerActionMode) {
+    const waitDiv = document.createElement("div");
+    waitDiv.className = "player-action-waiting";
+    waitDiv.innerHTML = `
+      <div class="waiting-indicator">⏳ Đang chờ <strong>${escapeHtml(hunter?.name || "Thợ Săn")}</strong> chọn người kéo theo trên điện thoại...</div>
+      <button class="btn-big btn-skip" id="btnToggleHunterOverride" style="margin-top:10px">🎛️ Admin override</button>
+    `;
+    panel.appendChild(waitDiv);
+
+    const overrideDiv = document.createElement("div");
+    overrideDiv.id = "hunterOverridePanel";
+    overrideDiv.className = "hidden";
+    panel.appendChild(overrideDiv);
+
+    waitDiv.querySelector("#btnToggleHunterOverride").onclick = () => {
+      overrideDiv.classList.toggle("hidden");
+    };
+
+    renderHunterControls(alive, overrideDiv);
+    return;
+  }
+
+  renderHunterControls(alive, panel);
+}
+
+function renderHunterControls(alive, container) {
   const wrap = document.createElement("div");
   wrap.className = "select-wrap";
   let selectedId = null;
@@ -1023,7 +1135,7 @@ function renderHunterPanel() {
   skipBtn.onclick = () => submitHunterKill(null);
   wrap.appendChild(skipBtn);
 
-  panel.appendChild(wrap);
+  container.appendChild(wrap);
 }
 
 function renderDayVotePanel() {
@@ -1118,7 +1230,12 @@ function renderGameSetupPanel() {
       <p><strong>Vai trò tùy chọn:</strong></p>
       ${buildRoleCheckboxes(settings.roleOptions || {})}
     </div>
-    <p class="note-disabled" style="margin-top:8px">Vai trò trong preset: ${roleList.map(r => ROLE_LABEL_VI[r]).join(", ")}</p>
+    <label class="toggle-row" style="margin-top:12px;border-top:1px solid var(--border-color);padding-top:12px">
+      <span>🎮 Chế độ người chơi tự thao tác đêm</span>
+      <input type="checkbox" id="gameModeToggle" ${(settings.gameMode || "adminControl") === "playerAction" ? "checked" : ""} />
+    </label>
+    <p class="note-disabled" style="margin-top:4px">Bật: các vai tự bấm hành động đêm trên điện thoại. Admin vẫn có thể override.</p>
+    <p class="note-disabled" style="margin-top:2px">Vai trò trong preset: ${roleList.map(r => ROLE_LABEL_VI[r]).join(", ")}</p>
   `;
 
   // Bind checkboxes
@@ -1129,6 +1246,11 @@ function renderGameSetupPanel() {
       await updateDoc(roomRefDoc, { "settings.roleOptions": opts });
     };
   });
+
+  const gameModeToggle = panel.querySelector("#gameModeToggle");
+  if (gameModeToggle) {
+    gameModeToggle.onchange = toggleGameMode;
+  }
 }
 
 function buildRoleCheckboxes(options) {
@@ -1151,37 +1273,49 @@ function buildRoleCheckboxes(options) {
 }
 
 function renderChatPanel() {
-  const panel = $("#chatPanel");
-  if (!panel) return;
-
   const chat = currentRoom.chat || {};
-  const players = currentRoom.players || {};
 
-  // wolf chat
+  // Wolf chat — admin thấy mọi lúc (để theo dõi lịch sử)
   const wolfChatEl = $("#wolfChat");
-  if (wolfChatEl && currentRoom.phase === "night") {
-    wolfChatEl.classList.remove("hidden");
-    const messages = (chat.wolf || []).slice(-20);
+  if (wolfChatEl) {
+    const messages = (chat.wolf || []).slice(-50);
     const msgDiv = wolfChatEl.querySelector(".chat-messages");
     if (msgDiv) {
-      msgDiv.innerHTML = messages.map(m =>
-        `<div class="chat-msg"><strong>${m.name}:</strong> ${escapeHtml(m.text)}</div>`
-      ).join("");
+      if (messages.length === 0) {
+        msgDiv.innerHTML = `<div class="chat-empty">Chưa có tin nhắn nào.</div>`;
+      } else {
+        msgDiv.innerHTML = messages.map(m => {
+          const timeStr = m.time ? new Date(m.time).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "";
+          return `<div class="chat-msg">
+            <span class="chat-sender">🐺 ${escapeHtml(m.name)}</span>
+            <span class="chat-time">${timeStr}</span>
+            <div class="chat-text">${escapeHtml(m.text)}</div>
+          </div>`;
+        }).join("");
+      }
       msgDiv.scrollTop = msgDiv.scrollHeight;
     }
-  } else if (wolfChatEl) {
-    wolfChatEl.classList.add("hidden");
+    wolfChatEl.classList.remove("hidden");
   }
 
-  // admin can see all chats
+  // Lover chat — admin thấy mọi lúc
   const loverChatEl = $("#loverChat");
   if (loverChatEl) {
-    const messages = (chat.lovers || []).slice(-20);
+    const messages = (chat.lovers || []).slice(-50);
     const msgDiv = loverChatEl.querySelector(".chat-messages");
     if (msgDiv) {
-      msgDiv.innerHTML = messages.map(m =>
-        `<div class="chat-msg"><strong>${m.name}:</strong> ${escapeHtml(m.text)}</div>`
-      ).join("");
+      if (messages.length === 0) {
+        msgDiv.innerHTML = `<div class="chat-empty">Chưa có tin nhắn nào.</div>`;
+      } else {
+        msgDiv.innerHTML = messages.map(m => {
+          const timeStr = m.time ? new Date(m.time).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "";
+          return `<div class="chat-msg">
+            <span class="chat-sender">💞 ${escapeHtml(m.name)}</span>
+            <span class="chat-time">${timeStr}</span>
+            <div class="chat-text">${escapeHtml(m.text)}</div>
+          </div>`;
+        }).join("");
+      }
       msgDiv.scrollTop = msgDiv.scrollHeight;
     }
     loverChatEl.classList.remove("hidden");
@@ -1221,6 +1355,14 @@ function renderWinScreen() {
   } else {
     winDiv.classList.add("hidden");
   }
+}
+
+function renderGameModeBadge() {
+  const badge = $("#gameModeBadge");
+  if (!badge) return;
+  const mode = currentRoom.settings?.gameMode || "adminControl";
+  badge.textContent = mode === "playerAction" ? "🎮 Chế độ: Người chơi tự thao tác" : "🎛️ Chế độ: Admin kiểm soát";
+  badge.className = `game-mode-badge ${mode === "playerAction" ? "mode-player" : "mode-admin"}`;
 }
 
 function renderDebugToggle() {

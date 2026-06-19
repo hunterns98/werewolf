@@ -49,9 +49,16 @@
       <!-- VOTING AREA (ban ngày, còn sống) -->
       <div id="votingArea" class="panel hidden"></div>
 
+      <!-- PLAYER ACTION MODE — Night action area -->
+      <div id="playerNightActionArea" class="hidden"></div>
+
+      <!-- PLAYER ACTION MODE — Hunter action area -->
+      <div id="playerHunterActionArea" class="hidden"></div>
+
       <!-- WOLF CHAT (chỉ Sói thấy, ban đêm) -->
       <div id="wolfChatSection" class="panel hidden">
-        <h3>🐺 Sói Chat (chỉ Sói thấy)</h3>
+        <h3>🐺 Sói Chat <span class="chat-badge chat-badge-wolf">Chỉ Sói thấy</span></h3>
+        <p class="note-disabled" style="margin:0 0 6px">Nói chuyện với đồng đội sói — chỉ ban đêm</p>
         <div class="chat-messages" id="wolfChatMessages"></div>
         <div class="chat-input-row">
           <input type="text" id="wolfChatInput" placeholder="Nhắn tin với đồng đội sói..." />
@@ -61,7 +68,8 @@
 
       <!-- LOVER CHAT -->
       <div id="loverChatSection" class="panel hidden">
-        <h3>💞 Cặp Đôi Chat (chỉ 2 người yêu thấy)</h3>
+        <h3>💞 Cặp Đôi Chat <span class="chat-badge chat-badge-lover">Chỉ 2 người yêu thấy</span></h3>
+        <p class="note-disabled" style="margin:0 0 6px">Kênh riêng tư mọi lúc — kể cả sau khi chết chỉ đọc được</p>
         <div class="chat-messages" id="loverChatMessages"></div>
         <div class="chat-input-row">
           <input type="text" id="loverChatInput" placeholder="Nhắn tin người yêu..." />

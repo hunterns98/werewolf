@@ -25,6 +25,7 @@
       <div class="room-code-box">
         Mã phòng: <span id="roomCodeDisplay">----</span>
         <div id="testModeBadge" class="test-mode-badge hidden">🧪 TEST MODE ĐANG BẬT</div>
+        <div id="gameModeBadge" class="game-mode-badge mode-admin">🎛️ Chế độ: Admin kiểm soát</div>
       </div>
 
       <div id="phaseBanner" class="phase-banner phase-lobby">🛋️ Phòng chờ</div>
@@ -63,12 +64,14 @@
 
       <!-- CHAT PANELS (admin readonly) -->
       <div class="panel" id="wolfChat">
-        <h3>🐺 Sói Chat (Admin xem)</h3>
+        <h3>🐺 Sói Chat <span class="chat-badge chat-badge-wolf">Admin xem</span></h3>
+        <p class="note-disabled" style="margin:0 0 6px">Chỉ sói thấy nhau • Chỉ ban đêm • Admin luôn thấy lịch sử</p>
         <div class="chat-messages" id="wolfChatMessages" style="max-height:160px;overflow-y:auto"></div>
       </div>
 
       <div class="panel" id="loverChat">
-        <h3>💞 Cặp Đôi Chat (Admin xem)</h3>
+        <h3>💞 Cặp Đôi Chat <span class="chat-badge chat-badge-lover">Admin xem</span></h3>
+        <p class="note-disabled" style="margin:0 0 6px">Chỉ cặp đôi thấy • Admin luôn thấy</p>
         <div class="chat-messages" id="loverChatMessages" style="max-height:160px;overflow-y:auto"></div>
       </div>
 
