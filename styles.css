@@ -565,145 +565,78 @@ button {
 }
 
 /* ============================================================
-   PLAYER ACTION MODE — Phase 3
+   ADDITIONS v3.0
+   ============================================================
+   - Timeline (Lịch sử bí mật / Toàn bộ lịch sử trận đấu)
+   - Lover role info line (Cupid bền vững qua biến đổi vai trò)
+   - Manual Role Editor (Role Balance)
+   - Disabled chat input khi người chơi đã chết
+   - Nhấn nhẹ khu vực hành động đêm của Player Action Mode
    ============================================================ */
 
-/* Game mode badge in admin */
-.game-mode-badge {
-  margin-top: 8px;
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: normal;
-  border-radius: 6px;
-  padding: 5px 10px;
-  display: inline-block;
-}
-.game-mode-badge.mode-admin {
-  color: var(--accent-moon);
-  background: rgba(241, 196, 15, 0.12);
-  border: 1px solid rgba(241, 196, 15, 0.3);
-}
-.game-mode-badge.mode-player {
-  color: #74b9ff;
-  background: rgba(52, 152, 219, 0.15);
-  border: 1px solid rgba(52, 152, 219, 0.4);
-}
-
-/* Waiting indicator in admin (player action mode) */
-.player-action-waiting {
-  padding: 12px;
+/* ---------- TIMELINE / SECRET HISTORY ---------- */
+.timeline-header {
   background: var(--bg-panel-light);
-  border-radius: 10px;
-  margin-bottom: 8px;
-}
-.waiting-indicator {
-  font-size: 1rem;
-  color: var(--text-muted);
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: rgba(52, 152, 219, 0.08);
-  border: 1px dashed rgba(52, 152, 219, 0.3);
-  animation: waitPulse 2s ease-in-out infinite;
-}
-.waiting-indicator.submitted {
-  color: var(--accent-good);
-  background: rgba(46, 204, 113, 0.08);
-  border-color: rgba(46, 204, 113, 0.3);
-  animation: none;
-}
-@keyframes waitPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-
-/* Night action panel on player screen */
-.night-action-panel {
-  border: 2px solid rgba(52, 152, 219, 0.4);
-  background: linear-gradient(135deg, rgba(44, 62, 110, 0.6), var(--bg-panel));
-  animation: popIn 0.3s ease;
-}
-.night-action-panel h3 {
-  color: #74b9ff;
-  margin-bottom: 12px;
-}
-.night-action-panel.hunter-panel {
-  border-color: rgba(192, 57, 43, 0.5);
-  background: linear-gradient(135deg, rgba(192, 57, 43, 0.1), var(--bg-panel));
-}
-.night-action-panel.hunter-panel h3 {
-  color: var(--accent-blood);
-}
-
-   ============================================================ */
-
-/* Message layout: sender + time on top, text below */
-.chat-msg {
-  padding: 6px 10px;
-  border-radius: 8px;
-  margin-bottom: 6px;
-  background: var(--bg-panel-light);
-  line-height: 1.4;
-}
-.chat-msg.chat-mine {
-  background: rgba(52, 152, 219, 0.18);
-  text-align: right;
-}
-.chat-sender {
-  font-weight: 700;
-  font-size: 0.82rem;
   color: var(--accent-moon);
-}
-.chat-msg.chat-mine .chat-sender {
-  color: #74b9ff;
-}
-.chat-time {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin-left: 6px;
-}
-.chat-text {
-  font-size: 0.9rem;
-  color: var(--text-light);
-  margin-top: 2px;
-  word-break: break-word;
-}
-.chat-empty {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  text-align: center;
-  padding: 8px 0;
-  font-style: italic;
-}
-
-/* Disabled input state */
-.chat-input-row input:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  background: var(--bg-dark);
-}
-.chat-input-row button:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-/* Chat badges (Wolf / Lover labels in header) */
-.chat-badge {
-  display: inline-block;
-  font-size: 0.72rem;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 10px;
-  vertical-align: middle;
-  margin-left: 6px;
+  font-weight: 800;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin: 14px 0 8px;
   letter-spacing: 0.3px;
 }
-.chat-badge-wolf {
-  background: rgba(192, 57, 43, 0.2);
-  color: #ff8080;
-  border: 1px solid rgba(192, 57, 43, 0.4);
+.timeline-header:first-child {
+  margin-top: 0;
 }
-.chat-badge-lover {
-  background: rgba(231, 76, 60, 0.15);
-  color: #ff8fa3;
-  border: 1px solid rgba(231, 76, 60, 0.35);
+
+/* ---------- LOVER ROLE INFO ---------- */
+.lover-role-info {
+  margin-top: 6px;
+  font-size: 0.9rem;
+  color: var(--text-light);
+}
+
+/* ---------- MANUAL ROLE EDITOR ---------- */
+.manual-role-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-panel-light);
+  margin-bottom: 6px;
+}
+.manual-role-row input[type="number"] {
+  width: 70px;
+  padding: 8px;
+  margin-bottom: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-dark);
+  color: var(--text-light);
+  text-align: center;
+  font-size: 0.95rem;
+}
+
+/* ---------- DISABLED CHAT (người chơi đã chết) ---------- */
+.chat-input-row input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.chat-input-row button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- NIGHT ACTION PLAYER (Player Action Mode) ---------- */
+#nightActionPlayer, #hunterPullPlayer {
+  border: 2px solid var(--accent-moon);
+  animation: popIn 0.3s ease;
+}
+#nightActionPlayer h3, #hunterPullPlayer h3 {
+  color: var(--accent-moon);
+}
+
+/* ---------- END GAME REVEAL SECTIONS ---------- */
+#endGameRevealSection, #timelineRevealSection {
+  animation: popIn 0.4s ease;
 }

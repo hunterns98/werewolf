@@ -1,5 +1,12 @@
 // ============================================================
-// GAME.JS — CORE LOGIC MA SÓI (LAYER "BỘ NÃO") v2.0
+// GAME.JS — CORE LOGIC MA SÓI (LAYER "BỘ NÃO") v3.0
+// ============================================================
+// v3.0: + Con Hoang, + Secret Log (bí mật/timeline), + luật Bảo Vệ
+//       không lặp người 2 đêm liên tiếp, + originalRole cho reveal,
+//       + relationship Cupid bền vững qua biến đổi vai trò.
+// Toàn bộ hàm trong file này là HÀM THUẦN (không đụng DOM/Firebase),
+// được admin.js và player.js cùng import để đảm bảo 2 phía luôn
+// tính ra kết quả giống nhau.
 // ============================================================
 
 export const ROLES = {
@@ -15,6 +22,7 @@ export const ROLES = {
   THIEF: "thief",
   TRAITOR: "traitor",
   CURSED_WOLF: "cursed_wolf",
+  WILD_CHILD: "wild_child",
 };
 
 export const ROLE_LABEL_VI = {
@@ -30,6 +38,7 @@ export const ROLE_LABEL_VI = {
   thief: "Ăn Trộm",
   traitor: "Phản Bội",
   cursed_wolf: "Sói Nguyền",
+  wild_child: "Con Hoang",
 };
 
 export const ROLE_TEAM = {
@@ -45,17 +54,21 @@ export const ROLE_TEAM = {
   thief: "village", // changes after setup
   traitor: "third",
   cursed_wolf: "wolf",
+  wild_child: "village", // changes to "wolf" automatically once role becomes werewolf
 };
 
-// Thứ tự hành động đêm đầy đủ
-export const NIGHT_STEPS_FULL = ["cupid", "thief", "guardian", "werewolf", "cursed_wolf", "seer", "witch", "flute_player"];
+// Thứ tự hành động đêm đầy đủ (tham khảo)
+export const NIGHT_STEPS_FULL = [
+  "cupid", "thief", "wild_child", "guardian", "werewolf",
+  "cursed_wolf", "seer", "witch", "flute_player",
+];
 
 // ============================================================
 // ROLE PRESETS by player count
 // ============================================================
 
 export function getRolePreset(count, options = {}) {
-  // options: { cupid, witch, elder, flute_player, thief, traitor, cursed_wolf }
+  // options: { cupid, witch, elder, flute_player, thief, traitor, cursed_wolf, wild_child }
   const base = buildBasePreset(count);
   return applyOptions(base, count, options);
 }
@@ -86,7 +99,7 @@ function buildBasePreset(count) {
 
 function applyOptions(base, count, options) {
   const result = { ...base };
-  const optionalRoles = ["cupid", "witch", "elder", "flute_player", "thief", "traitor", "cursed_wolf"];
+  const optionalRoles = ["cupid", "witch", "elder", "flute_player", "thief", "traitor", "cursed_wolf", "wild_child"];
   for (const role of optionalRoles) {
     if (options[role] === true && !result[role]) {
       result[role] = 1;
@@ -119,9 +132,11 @@ export function getNightStepsForRound(round, presentRoles) {
   const steps = [];
   if (round === 1 && presentRoles.has("cupid")) steps.push("cupid");
   if (round === 1 && presentRoles.has("thief")) steps.push("thief");
+  if (round === 1 && presentRoles.has("wild_child")) steps.push("wild_child");
   if (presentRoles.has("guardian")) steps.push("guardian");
   steps.push("werewolf");
-  if (presentRoles.has("cursed_wolf") && round % 2 === 0) steps.push("cursed_wolf");
+  // Sói Nguyền: từ đêm thứ 2 trở đi, MỌI đêm (không chỉ đêm chẵn)
+  if (presentRoles.has("cursed_wolf") && round >= 2) steps.push("cursed_wolf");
   if (presentRoles.has("seer")) steps.push("seer");
   if (presentRoles.has("witch")) steps.push("witch");
   if (presentRoles.has("flute_player")) steps.push("flute_player");
@@ -171,6 +186,7 @@ export function assignRoles(playersMap, roleList) {
     result[id] = {
       ...playersMap[id],
       role: roles[idx],
+      originalRole: roles[idx], // giữ vai trò gốc để reveal cuối game, KHÔNG đổi theo biến đổi
       alive: true,
       isLover: false,
     };
@@ -191,8 +207,9 @@ export function emptyNightState(round) {
     round,
     cupid: { done: false, lovers: [] },
     thief: { done: false, chosenRole: null },
+    wild_child: { done: false, adoptParentId: null },
     guardian: { done: false, protect: null },
-    werewolf: { done: false, target: null },
+    werewolf: { done: false, target: null, votes: {} },
     cursed_wolf: { done: false, target: null },
     seer: { done: false, target: null, result: null },
     witch: { done: false, save: false, poisonTarget: null },
@@ -228,6 +245,41 @@ export function applyThief(playersMap, thiefId, chosenRole) {
     updated[thiefId] = { ...updated[thiefId], role: chosenRole };
   }
   return updated;
+}
+
+// Con Hoang: chọn mẹ nuôi. Đây là trạng thái RIÊNG (adoptParentId), không
+// phải role — y hệt cách Cupid lưu isLover/loverPartnerId riêng với role,
+// để khi role biến đổi (vd: bị Sói Nguyền) thì liên kết Cupid/Con Hoang vẫn còn.
+export function applyWildChildAdopt(playersMap, childId, parentId) {
+  const updated = { ...playersMap };
+  if (childId && parentId) {
+    updated[childId] = { ...updated[childId], adoptParentId: parentId };
+  }
+  return updated;
+}
+
+// Kiểm tra & áp dụng biến đổi Con Hoang → Sói khi mẹ nuôi đã chết.
+// Hàm thuần, an toàn gọi lại nhiều lần (idempotent).
+export function checkWildChildTransform(playersMap) {
+  const updated = JSON.parse(JSON.stringify(playersMap));
+  const transforms = [];
+  Object.entries(updated).forEach(([id, p]) => {
+    if (p.role === "wild_child" && p.alive !== false && p.adoptParentId) {
+      const parent = updated[p.adoptParentId];
+      if (!parent || parent.alive === false) {
+        updated[id].role = "werewolf";
+        transforms.push({ id, name: p.name });
+      }
+    }
+  });
+  return { updatedPlayers: updated, transforms };
+}
+
+// Luật Bảo Vệ: không được bảo vệ cùng 1 người 2 đêm liên tiếp.
+// targetId === null/undefined (bỏ qua) luôn hợp lệ.
+export function isValidGuardianTarget(targetId, lastProtectedId) {
+  if (!targetId) return true;
+  return targetId !== lastProtectedId;
 }
 
 // ============================================================
@@ -274,6 +326,7 @@ export function resolveNight(playersMap, nightState) {
   }
 
   // 3. Cursed wolf: turn someone into werewolf (no death, just role change)
+  //    Không bị chặn bởi Bảo Vệ / Phù Thủy / Già Làng — áp dụng vô điều kiện.
   const curseTarget = nightState.cursed_wolf?.target || null;
   if (curseTarget && updated[curseTarget] && updated[curseTarget].alive) {
     updated[curseTarget].role = "werewolf";
@@ -382,7 +435,8 @@ export function checkWinCondition(playersMap) {
     if (allCharmed && alive.length > 1) return "flute_player";
   }
 
-  // Lovers win: only 2 alive and both are lovers
+  // Lovers win: only 2 alive and both are lovers — bất kể role hiện tại của họ là gì
+  // (vd: 1 người bị Sói Nguyền hóa Sói, người kia vẫn Dân Làng — vẫn thắng theo Cặp Đôi)
   if (alive.length === 2 && alive.every((p) => p.isLover)) return "lovers";
 
   if (aliveWolves.length === 0) return "village";
@@ -392,7 +446,7 @@ export function checkWinCondition(playersMap) {
 }
 
 // ============================================================
-// LOG HELPER
+// LOG HELPER (log công khai / log admin dạng text — giữ nguyên như v2.0)
 // ============================================================
 
 export function makeLogEntry(round, phase, text, type = "info") {
@@ -419,3 +473,59 @@ export const ROLE_TEAM_LABEL_VI = {
   village: "Phe Dân 👥",
   third: "Phe Thứ 3 🟣",
 };
+
+// ============================================================
+// SECRET LOG (v3.0) — lịch sử bí mật có cấu trúc:
+// { round, phase, event, actor, target, result, time }
+// Dùng cho: (1) bảng "Lịch sử bí mật" realtime của Admin,
+//           (2) "Toàn bộ lịch sử trận đấu" mở khóa cho Player khi game kết thúc.
+// Player KHÔNG đọc field này khi game đang chạy (UI tự khóa theo phase).
+// ============================================================
+
+export function makeSecretEntry(round, phase, event, actor, target, result) {
+  return { round, phase, event, actor: actor || null, target: target || null, result: result || null, time: Date.now() };
+}
+
+export const SECRET_EVENT_LABEL_VI = {
+  cupid_pair: "💘 Cupid ghép cặp",
+  thief_swap: "🃏 Ăn Trộm đổi vai",
+  wild_child_adopt: "👩 Con Hoang chọn mẹ nuôi",
+  wild_child_transform: "🌀 Con Hoang hóa Sói",
+  guardian_protect: "🛡️ Bảo Vệ chọn bảo vệ",
+  wolf_target: "🐺 Sói chọn nạn nhân",
+  cursed_wolf_curse: "🌀 Sói Nguyền nguyền",
+  seer_check: "🔮 Tiên Tri soi",
+  witch_save: "🧪 Phù Thủy cứu",
+  witch_poison: "☠️ Phù Thủy đầu độc",
+  flute_charm: "🎶 Thổi Sáo ru ngủ",
+  hunter_pull: "🏹 Thợ Săn kéo theo",
+  vote_result: "🗳️ Kết quả vote",
+  death: "💀 Tử vong",
+  role_transform: "🌀 Biến đổi vai trò",
+};
+
+export function formatSecretEntry(e) {
+  const label = SECRET_EVENT_LABEL_VI[e.event] || e.event;
+  let line = label;
+  if (e.actor) line += ` — ${e.actor}`;
+  if (e.target) line += ` → ${e.target}`;
+  if (e.result) line += ` (${e.result})`;
+  return line;
+}
+
+// Gom secretLog theo (round, phase) để hiển thị dạng timeline.
+// Trả về danh sách [{round, phase, entries: [...]}] theo thứ tự xuất hiện sớm nhất trước
+// (đêm 1, ngày 1, đêm 2, ngày 2, ...). Phía hiển thị có thể .slice().reverse() nếu cần mới-nhất-trước.
+export function groupSecretLog(secretLog) {
+  const order = [];
+  const groups = {};
+  (secretLog || []).forEach((e) => {
+    const key = `${e.round}_${e.phase}`;
+    if (!groups[key]) {
+      groups[key] = { round: e.round, phase: e.phase, entries: [] };
+      order.push(key);
+    }
+    groups[key].entries.push(e);
+  });
+  return order.map((k) => groups[k]);
+}

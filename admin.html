@@ -25,7 +25,6 @@
       <div class="room-code-box">
         Mã phòng: <span id="roomCodeDisplay">----</span>
         <div id="testModeBadge" class="test-mode-badge hidden">🧪 TEST MODE ĐANG BẬT</div>
-        <div id="gameModeBadge" class="game-mode-badge mode-admin">🎛️ Chế độ: Admin kiểm soát</div>
       </div>
 
       <div id="phaseBanner" class="phase-banner phase-lobby">🛋️ Phòng chờ</div>
@@ -53,7 +52,7 @@
         </div>
       </div>
 
-      <!-- GAME SETUP (chỉ khi lobby) -->
+      <!-- GAME SETUP (chỉ khi lobby) — gồm Chế độ hành động, Cách chia vai trò, Auto/Manual -->
       <div id="gameSetupPanel" class="panel hidden"></div>
 
       <!-- NIGHT ACTION PANEL -->
@@ -64,14 +63,12 @@
 
       <!-- CHAT PANELS (admin readonly) -->
       <div class="panel" id="wolfChat">
-        <h3>🐺 Sói Chat <span class="chat-badge chat-badge-wolf">Admin xem</span></h3>
-        <p class="note-disabled" style="margin:0 0 6px">Chỉ sói thấy nhau • Chỉ ban đêm • Admin luôn thấy lịch sử</p>
+        <h3>🐺 Sói Chat (Admin xem)</h3>
         <div class="chat-messages" id="wolfChatMessages" style="max-height:160px;overflow-y:auto"></div>
       </div>
 
       <div class="panel" id="loverChat">
-        <h3>💞 Cặp Đôi Chat <span class="chat-badge chat-badge-lover">Admin xem</span></h3>
-        <p class="note-disabled" style="margin:0 0 6px">Chỉ cặp đôi thấy • Admin luôn thấy</p>
+        <h3>💞 Cặp Đôi Chat (Admin xem)</h3>
         <div class="chat-messages" id="loverChatMessages" style="max-height:160px;overflow-y:auto"></div>
       </div>
 
@@ -85,6 +82,13 @@
       <div class="panel">
         <h2>📜 Lịch sử (Log bí mật Admin)</h2>
         <div id="logPanel" class="log-panel"></div>
+      </div>
+
+      <!-- SECRET HISTORY — lịch sử bí mật có cấu trúc (Sói chọn ai, Tiên Tri soi ai/kết quả,
+           Bảo Vệ bảo vệ ai, Phù Thủy cứu/độc ai, Cupid ghép ai, Thợ Săn kéo ai, role biến đổi...) -->
+      <div class="panel" id="secretHistoryPanel">
+        <h2>🕵️ Lịch sử bí mật (chỉ Admin)</h2>
+        <p class="note-disabled">Chưa có hành động bí mật nào.</p>
       </div>
 
     </div>
