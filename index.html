@@ -35,10 +35,13 @@
         <p>⏳ Đang chờ Admin bắt đầu game...</p>
       </div>
 
+      <!-- WOLF TEAM INFO (chỉ hiện cho Sói/Sói Nguyền còn sống) -->
+      <div id="wolfTeamSection" class="panel hidden"></div>
+
       <!-- NIGHT ACTION (Player Action Mode — chỉ hiện khi Admin bật chế độ "Người chơi tự bấm") -->
       <div id="nightActionPlayer" class="panel hidden"></div>
 
-      <!-- HUNTER PULL (chỉ hiện cho Thợ Săn vừa chết, ở chế độ Player Action Mode) -->
+      <!-- HUNTER PULL (Thợ Săn luôn tự chọn người kéo theo ngay khi chết) -->
       <div id="hunterPullPlayer" class="panel hidden"></div>
 
       <!-- LOVER INFO -->
@@ -46,6 +49,9 @@
 
       <!-- SEER HISTORY (chỉ hiện cho Tiên Tri) -->
       <div id="seerHistorySection" class="panel hidden"></div>
+
+      <!-- MY VOTE COUNT (ban ngày: số phiếu bản thân đang nhận) -->
+      <div id="myVoteCountDisplay" class="note-disabled hidden" style="text-align:center;margin-bottom:8px"></div>
 
       <!-- ALIVE PLAYER LIST -->
       <div class="panel">
@@ -84,6 +90,16 @@
         <div id="logPanelPlayer" class="log-panel"></div>
       </div>
 
+      <!-- SUPPORT CHAT (chat riêng với Admin: hỏi luật, báo lỗi, cần hỗ trợ — luôn mở, mọi lúc) -->
+      <div class="panel" id="supportChatSection">
+        <h3>💬 Cần hỗ trợ? Chat riêng với Admin</h3>
+        <div class="chat-messages" id="supportChatMessages"></div>
+        <div class="chat-input-row">
+          <input type="text" id="supportChatInput" placeholder="Hỏi luật, báo lỗi, cần hỗ trợ..." />
+          <button id="supportChatSend" class="btn-send">Gửi</button>
+        </div>
+      </div>
+
       <!-- END GAME: ROLE REVEAL (mở khóa khi game kết thúc) -->
       <div id="endGameRevealSection" class="panel hidden"></div>
 
@@ -95,7 +111,7 @@
     <!-- DEATH OVERLAY -->
     <div id="deathOverlay" class="death-overlay hidden">
       <h1>💀 YOU ARE DEAD</h1>
-      <p>Bạn đã chết. Hãy tiếp tục theo dõi trong im lặng...</p>
+      <p id="deathReasonText">Bạn đã chết. Hãy tiếp tục theo dõi trong im lặng...</p>
     </div>
 
   </div>

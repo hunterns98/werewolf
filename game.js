@@ -1,9 +1,14 @@
 // ============================================================
-// GAME.JS — CORE LOGIC MA SÓI (LAYER "BỘ NÃO") v3.0
+// GAME.JS — CORE LOGIC MA SÓI (LAYER "BỘ NÃO") v4.0
 // ============================================================
 // v3.0: + Con Hoang, + Secret Log (bí mật/timeline), + luật Bảo Vệ
 //       không lặp người 2 đêm liên tiếp, + originalRole cho reveal,
 //       + relationship Cupid bền vững qua biến đổi vai trò.
+// v4.0: + resolveWolfVote (vote Sói cần đa số tuyệt đối, hòa/không đa số
+//       = không ai chết; Sói được vote đồng đội), + sửa lại đúng luật
+//       Sói Nguyền (chỉ biến đúng mục tiêu đàn Sói vote chết, không tự
+//       chọn nạn nhân riêng), + deathCause lưu trên player (để Player tự
+//       biết lý do chết do VOTE — công khai — nhưng vẫn ẩn lý do ban đêm).
 // Toàn bộ hàm trong file này là HÀM THUẦN (không đụng DOM/Firebase),
 // được admin.js và player.js cùng import để đảm bảo 2 phía luôn
 // tính ra kết quả giống nhau.
@@ -205,15 +210,17 @@ export function assignRoles(playersMap, roleList) {
 export function emptyNightState(round) {
   return {
     round,
-    cupid: { done: false, lovers: [] },
-    thief: { done: false, chosenRole: null },
-    wild_child: { done: false, adoptParentId: null },
-    guardian: { done: false, protect: null },
-    werewolf: { done: false, target: null, votes: {} },
-    cursed_wolf: { done: false, target: null },
-    seer: { done: false, target: null, result: null },
-    witch: { done: false, save: false, poisonTarget: null },
-    flute_player: { done: false, targets: [] },
+    cupid: { done: false, lovers: [], confirmed: false },
+    thief: { done: false, chosenRole: null, confirmed: false },
+    wild_child: { done: false, adoptParentId: null, confirmed: false },
+    guardian: { done: false, protect: null, confirmed: false },
+    werewolf: { done: false, target: null, votes: {}, confirmedBy: {} },
+    // Sói Nguyền KHÔNG còn chọn nạn nhân riêng — chỉ quyết định có "nguyền"
+    // (biến thành Sói) đúng cái mục tiêu mà đàn Sói đã vote chết hay không.
+    cursed_wolf: { done: false, curse: false, confirmed: false },
+    seer: { done: false, target: null, result: null, confirmed: false },
+    witch: { done: false, save: false, poisonTarget: null, confirmed: false },
+    flute_player: { done: false, targets: [], confirmed: false },
   };
 }
 
@@ -282,6 +289,32 @@ export function isValidGuardianTarget(targetId, lastProtectedId) {
   return targetId !== lastProtectedId;
 }
 
+// Tổng hợp vote của đàn Sói thành 1 mục tiêu duy nhất.
+// Luật: phải có ĐA SỐ TUYỆT ĐỐI (>50% số phiếu đã bỏ) mới có người chết.
+// Hòa phiếu cao nhất, hoặc không ai đạt đa số tuyệt đối → không ai chết đêm đó.
+// Sói được phép vote cho bất kỳ ai còn sống, kể cả đồng đội Sói (chiến thuật).
+export function resolveWolfVote(votes) {
+  const tally = {};
+  Object.values(votes || {}).forEach((tid) => {
+    if (tid) tally[tid] = (tally[tid] || 0) + 1;
+  });
+  const entries = Object.entries(tally);
+  const totalVotes = entries.reduce((sum, [, c]) => sum + c, 0);
+  if (entries.length === 0 || totalVotes === 0) {
+    return { target: null, tally, hasMajority: false };
+  }
+  const maxVotes = Math.max(...entries.map(([, c]) => c));
+  const topCandidates = entries.filter(([, c]) => c === maxVotes);
+  if (topCandidates.length > 1) {
+    return { target: null, tally, hasMajority: false }; // hòa phiếu cao nhất
+  }
+  const [topId, topCount] = topCandidates[0];
+  if (topCount * 2 <= totalVotes) {
+    return { target: null, tally, hasMajority: false }; // không đạt đa số tuyệt đối
+  }
+  return { target: topId, tally, hasMajority: true };
+}
+
 // ============================================================
 // RESOLVE NIGHT
 // ============================================================
@@ -289,24 +322,33 @@ export function isValidGuardianTarget(targetId, lastProtectedId) {
 export function resolveNight(playersMap, nightState) {
   let updated = JSON.parse(JSON.stringify(playersMap));
   const deaths = [];
+  const transforms = []; // Sói Nguyền: người bị biến thành Sói thay vì chết
 
   const wolfTarget = nightState.werewolf?.target || null;
   const guardTarget = nightState.guardian?.protect || null;
   const witchSaved = nightState.witch?.save === true;
   const poisonTarget = nightState.witch?.poisonTarget || null;
+  const cursedChoice = nightState.cursed_wolf?.curse === true;
 
   // 1. Wolf target
-  if (wolfTarget && updated[wolfTarget]) {
-    const protectedByGuardian = guardTarget === wolfTarget;
-    const savedByWitch = witchSaved;
+  if (wolfTarget && updated[wolfTarget] && updated[wolfTarget].alive) {
+    if (cursedChoice) {
+      // Sói Nguyền chọn biến CHÍNH mục tiêu bị đàn Sói vote chết thành Sói,
+      // thay vì giết. KHÔNG bị chặn bởi Bảo Vệ / Phù Thủy / Già Làng.
+      // (Không thể "cắn A chết rồi nguyền B" — chỉ có 1 mục tiêu duy nhất.)
+      updated[wolfTarget].role = "werewolf";
+      transforms.push({ id: wolfTarget, name: updated[wolfTarget].name });
+    } else {
+      const protectedByGuardian = guardTarget === wolfTarget;
+      const savedByWitch = witchSaved;
 
-    if (!protectedByGuardian && !savedByWitch) {
-      if (updated[wolfTarget].alive) {
+      if (!protectedByGuardian && !savedByWitch) {
         // Elder special: 2 lives
         if (updated[wolfTarget].role === "elder" && updated[wolfTarget].elderLives > 1) {
           updated[wolfTarget].elderLives = 1; // first bite
         } else {
           updated[wolfTarget].alive = false;
+          updated[wolfTarget].deathCause = "werewolf";
           deaths.push({ id: wolfTarget, name: updated[wolfTarget].name, cause: "werewolf" });
         }
       }
@@ -316,26 +358,15 @@ export function resolveNight(playersMap, nightState) {
   // 2. Poison
   if (poisonTarget && updated[poisonTarget] && updated[poisonTarget].alive) {
     // Poison + wolf on elder in same night = death regardless
-    if (updated[poisonTarget].role === "elder") {
-      updated[poisonTarget].alive = false;
-      deaths.push({ id: poisonTarget, name: updated[poisonTarget].name, cause: "poison" });
-    } else {
-      updated[poisonTarget].alive = false;
-      deaths.push({ id: poisonTarget, name: updated[poisonTarget].name, cause: "poison" });
-    }
+    updated[poisonTarget].alive = false;
+    updated[poisonTarget].deathCause = "poison";
+    deaths.push({ id: poisonTarget, name: updated[poisonTarget].name, cause: "poison" });
   }
 
-  // 3. Cursed wolf: turn someone into werewolf (no death, just role change)
-  //    Không bị chặn bởi Bảo Vệ / Phù Thủy / Già Làng — áp dụng vô điều kiện.
-  const curseTarget = nightState.cursed_wolf?.target || null;
-  if (curseTarget && updated[curseTarget] && updated[curseTarget].alive) {
-    updated[curseTarget].role = "werewolf";
-  }
-
-  // 4. Lovers chain
+  // 3. Lovers chain
   updated = applyLoverChain(updated, deaths);
 
-  return { updatedPlayers: updated, deaths };
+  return { updatedPlayers: updated, deaths, transforms };
 }
 
 function applyLoverChain(updated, deaths) {
@@ -347,10 +378,12 @@ function applyLoverChain(updated, deaths) {
       const [[idA, pA], [idB, pB]] = lovers;
       if (!pA.alive && pB.alive) {
         updated[idB].alive = false;
+        updated[idB].deathCause = "lover";
         deaths.push({ id: idB, name: pB.name, cause: "lover" });
         changed = true;
       } else if (!pB.alive && pA.alive) {
         updated[idA].alive = false;
+        updated[idA].deathCause = "lover";
         deaths.push({ id: idA, name: pA.name, cause: "lover" });
         changed = true;
       }
@@ -400,6 +433,7 @@ export function applyDayVoteResult(playersMap, eliminatedId) {
 
   if (eliminatedId && updated[eliminatedId] && updated[eliminatedId].alive) {
     updated[eliminatedId].alive = false;
+    updated[eliminatedId].deathCause = "vote";
     deaths.push({ id: eliminatedId, name: updated[eliminatedId].name, cause: "vote" });
   }
 
@@ -413,6 +447,7 @@ export function applyHunterKill(playersMap, hunterId, targetId) {
   const deaths = [];
   if (targetId && updated[targetId] && updated[targetId].alive) {
     updated[targetId].alive = false;
+    updated[targetId].deathCause = "hunter";
     deaths.push({ id: targetId, name: updated[targetId].name, cause: "hunter" });
     applyLoverChain(updated, deaths);
   }

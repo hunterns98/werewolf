@@ -640,3 +640,39 @@ button {
 #endGameRevealSection, #timelineRevealSection {
   animation: popIn 0.4s ease;
 }
+
+/* ============================================================
+   ADDITIONS v4.0
+   ============================================================
+   - Support chat threads (Admin trả lời riêng từng Player)
+   - Trạng thái khóa sau khi Player tự xác nhận hành động đêm
+   - Đồng đội Sói / số vote bản thân
+   ============================================================ */
+
+/* ---------- SUPPORT CHAT THREADS (Admin) ---------- */
+.support-thread {
+  background: var(--bg-panel-light);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.support-thread h3 {
+  margin-bottom: 8px;
+  color: var(--accent-moon);
+  font-size: 1rem;
+}
+#supportChatSection .chat-messages {
+  min-height: 40px;
+}
+
+/* ---------- LOCKED NIGHT ACTION STATE ---------- */
+#nightActionPlayer p strong,
+#hunterPullPlayer p strong {
+  color: var(--accent-moon);
+}
+
+/* ---------- WOLF TEAM INFO ---------- */
+#wolfTeamSection .player-chip {
+  font-weight: 700;
+}

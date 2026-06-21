@@ -1,11 +1,20 @@
 // ============================================================
-// ADMIN.JS — ĐIỀU KHIỂN GAME v3.0
+// ADMIN.JS — ĐIỀU KHIỂN GAME v4.0
 // ============================================================
-// v3.0 thêm: Secret History (lịch sử bí mật có cấu trúc), Player Action
-// Mode (người chơi tự bấm hành động đêm), Con Hoang, luật Bảo Vệ không
-// lặp người 2 đêm liên tiếp, Role Balance (Auto/Manual), End Game Reveal
-// đầy đủ (vai trò gốc/hiện tại/phe). Toàn bộ hàm/luồng v2.0 được GIỮ
-// NGUYÊN — chỉ bổ sung thêm nhánh mới, không xóa logic cũ.
+// v3.0: Secret History, Player Action Mode, Con Hoang, luật Bảo Vệ
+// không lặp người 2 đêm liên tiếp, Role Balance (Auto/Manual), End Game
+// Reveal đầy đủ.
+// v4.0: + cho phép Sói/Phù Thủy/Tiên Tri/Bảo Vệ "Bỏ qua" hành động,
+// + Sói được vote đồng đội, + vote Sói cần đa số tuyệt đối (hòa/không đa
+// số = không ai chết), + sửa đúng luật Sói Nguyền (chỉ biến đúng mục
+// tiêu đàn Sói đã vote chết, không tự chọn nạn nhân riêng), + Player tự
+// xác nhận hành động đêm (khóa sau khi xác nhận, không cần Admin bấm),
+// + Auto timer phase đêm (60s/bước, tự xử lý theo trạng thái hiện tại
+// khi hết giờ, ở Player Action Mode), + Thợ Săn tự chọn kéo theo ngay
+// trên điện thoại (không cần Admin), + Chat riêng Player-Admin, + Reset
+// xóa luôn lịch sử chat, + lý do chết do vote hiển thị rõ cho Player.
+// Toàn bộ hàm/luồng các bản trước được GIỮ NGUYÊN — chỉ bổ sung/sửa đúng
+// phần được yêu cầu, không xóa logic không liên quan.
 // ============================================================
 import {
   db, doc, setDoc, getDoc, updateDoc, onSnapshot, deleteField, serverTimestamp,
@@ -19,7 +28,7 @@ import {
   resolveDayVote, applyDayVoteResult, applyHunterKill, checkWinCondition,
   makeLogEntry, getRolePreset, buildRoleList,
   applyWildChildAdopt, checkWildChildTransform, isValidGuardianTarget,
-  makeSecretEntry, groupSecretLog, formatSecretEntry,
+  makeSecretEntry, groupSecretLog, formatSecretEntry, resolveWolfVote,
 } from "./game.js";
 let roomCode = null;
 let roomRefDoc = null;
@@ -35,6 +44,24 @@ let manualOverrideActive = false;
 let lastNightStepSeen = null;
 let hunterManualOverride = false;
 let lastHunterPendingKey = null;
+// v4.0: thời gian mỗi bước đêm ở Player Action Mode (giây) + cờ chống
+// gọi trùng khi watcher tự động chốt bước.
+const NIGHT_STEP_SECONDS = 60;
+let autoAdvanceInFlight = false;
+let globalTickInterval = null;
+// Tiêu đề từng bước đêm — dùng chung cho cả UI thao tác thủ công và UI
+// trạng thái (Player Action Mode).
+const stepTitles = {
+  cupid: "💘 Cupid chọn 2 người yêu nhau",
+  thief: "🃏 Ăn Trộm chọn vai trò",
+  wild_child: "👩 Con Hoang chọn mẹ nuôi",
+  guardian: "🛡️ Bảo Vệ chọn người bảo vệ",
+  werewolf: "🐺 Sói chọn nạn nhân",
+  cursed_wolf: "🌀 Sói Nguyền — biến mục tiêu thành Sói?",
+  seer: "🔮 Tiên Tri soi 1 người",
+  witch: "🧪 Phù Thủy hành động",
+  flute_player: "🎶 Thổi Sáo ru ngủ 2 người",
+};
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 // ============================================================
@@ -72,6 +99,7 @@ export async function createRoom() {
     timerEndAt: null,
     timerDuration: null,
     timerPhase: null,
+    nightTimerEndAt: null,
     seerHistory: {},
     thiefOptions: [],
     createdAt: serverTimestamp(),
@@ -91,6 +119,17 @@ export function enterRoom(code) {
   $("#roomCodeDisplay").textContent = roomCode;
   $("#joinScreen").classList.add("hidden");
   $("#adminScreen").classList.remove("hidden");
+  startGlobalTicker();
+}
+// Tick mỗi giây: cập nhật đồng hồ đêm hiển thị + kiểm tra auto-watcher
+// (Player Action Mode: tự chốt bước khi mọi người đã xác nhận, hoặc khi
+// hết 60s thì coi như bỏ qua hành động chưa chọn).
+function startGlobalTicker() {
+  if (globalTickInterval) return;
+  globalTickInterval = setInterval(() => {
+    updateNightTimerDisplay();
+    runAutoWatchers();
+  }, 1000);
 }
 // ============================================================
 // 2. GAME CONTROL
@@ -156,7 +195,9 @@ export async function startGame() {
     timerEndAt: null,
     timerDuration: null,
     timerPhase: null,
+    nightTimerEndAt: Date.now() + NIGHT_STEP_SECONDS * 1000,
     thiefOptions,
+    chat: {}, // bắt đầu game mới — không giữ chat cũ từ trước
     logs: [
       ...currentRoom.logs,
       makeLogEntry(round, "night", `🎮 Game bắt đầu! ${count} người chơi. Đêm thứ 1 bắt đầu...`, "system"),
@@ -187,6 +228,8 @@ export async function resetGame() {
     timerEndAt: null,
     timerDuration: null,
     timerPhase: null,
+    nightTimerEndAt: null,
+    chat: {}, // reset toàn bộ: xóa lịch sử chat Sói + Cặp Đôi + Hỗ trợ, không giữ dữ liệu cũ
     logs: [makeLogEntry(0, "lobby", "🔄 Game đã được reset.", "system")],
   });
 }
@@ -211,7 +254,7 @@ export async function submitNightAction(step, stepData) {
   let seerHistory = currentRoom.seerHistory || {};
   let extraFields = {};
   if (step === "cupid") {
-    nightState.cupid = { done: true, lovers: stepData.lovers };
+    nightState.cupid = { done: true, lovers: stepData.lovers, confirmed: true };
     playersUpdate = applyCupid(currentRoom.players, stepData.lovers);
     const names = stepData.lovers.map((id) => currentRoom.players[id].name).join(" 💞 ");
     logs.push(makeLogEntry(round, "night", `💘 Cupid đã ghép cặp: ${names}`, "info"));
@@ -222,16 +265,16 @@ export async function submitNightAction(step, stepData) {
     secretLog.push(makeSecretEntry(round, "night", "cupid_pair", "Cupid", names, null));
   }
   if (step === "thief") {
-    nightState.thief = { done: true, chosenRole: stepData.chosenRole };
+    nightState.thief = { done: true, chosenRole: stepData.chosenRole, confirmed: true };
     if (stepData.thiefId && stepData.chosenRole) {
       playersUpdate = applyThief(currentRoom.players, stepData.thiefId, stepData.chosenRole);
     }
     const thiefName = currentRoom.players[stepData.thiefId]?.name || "Ăn Trộm";
-    logs.push(makeLogEntry(round, "night", `🃏 Ăn Trộm đã chọn vai trò: ${ROLE_LABEL_VI[stepData.chosenRole] || "?"}`, "info"));
-    secretLog.push(makeSecretEntry(round, "night", "thief_swap", thiefName, stepData.chosenRole ? (ROLE_LABEL_VI[stepData.chosenRole] || stepData.chosenRole) : null, null));
+    logs.push(makeLogEntry(round, "night", stepData.chosenRole ? `🃏 Ăn Trộm đã chọn vai trò: ${ROLE_LABEL_VI[stepData.chosenRole] || "?"}` : `🃏 Ăn Trộm giữ nguyên vai trò.`, "info"));
+    secretLog.push(makeSecretEntry(round, "night", "thief_swap", thiefName, stepData.chosenRole ? (ROLE_LABEL_VI[stepData.chosenRole] || stepData.chosenRole) : "Giữ nguyên", null));
   }
   if (step === "wild_child") {
-    nightState.wild_child = { done: true, adoptParentId: stepData.parentId || null };
+    nightState.wild_child = { done: true, adoptParentId: stepData.parentId || null, confirmed: true };
     if (stepData.childId && stepData.parentId) {
       playersUpdate = applyWildChildAdopt(currentRoom.players, stepData.childId, stepData.parentId);
     }
@@ -245,27 +288,40 @@ export async function submitNightAction(step, stepData) {
       alert("⚠️ Không thể bảo vệ cùng 1 người 2 đêm liên tiếp! Hãy chọn người khác.");
       return;
     }
-    nightState.guardian = { done: true, protect: stepData.protect };
-    const name = stepData.protect ? currentRoom.players[stepData.protect]?.name : "Không ai";
+    nightState.guardian = { done: true, protect: stepData.protect, confirmed: true };
+    const name = stepData.protect ? currentRoom.players[stepData.protect]?.name : "Không ai (bỏ qua)";
     logs.push(makeLogEntry(round, "night", `🛡️ Bảo Vệ đã bảo vệ: ${name}`, "info"));
     secretLog.push(makeSecretEntry(round, "night", "guardian_protect", "Bảo Vệ", name, null));
     extraFields.guardianLastProtect = stepData.protect || null;
   }
   if (step === "werewolf") {
-    nightState.werewolf = { done: true, target: stepData.target, votes: nightState.werewolf?.votes || {} };
+    // target ở đây đã là kết quả CUỐI (đã qua resolveWolfVote nếu là Player Action
+    // Mode, hoặc do Admin tự chọn trực tiếp ở Admin Control Mode) — null nghĩa là
+    // Sói bỏ qua / không đạt đa số tuyệt đối / hòa phiếu cao nhất ⇒ không ai chết.
+    nightState.werewolf = {
+      done: true,
+      target: stepData.target || null,
+      votes: nightState.werewolf?.votes || {},
+      confirmedBy: nightState.werewolf?.confirmedBy || {},
+    };
     const name = stepData.target ? currentRoom.players[stepData.target]?.name : "Không ai";
     logs.push(makeLogEntry(round, "night", `🐺 Sói đã chọn cắn: ${name}`, "info"));
     secretLog.push(makeSecretEntry(round, "night", "wolf_target", "Sói", name, null));
   }
   if (step === "cursed_wolf") {
-    nightState.cursed_wolf = { done: true, target: stepData.target };
-    const name = stepData.target ? currentRoom.players[stepData.target]?.name : "Không ai";
-    logs.push(makeLogEntry(round, "night", `🌀 Sói Nguyền đã nguyền: ${name}`, "info"));
-    secretLog.push(makeSecretEntry(round, "night", "cursed_wolf_curse", "Sói Nguyền", name, null));
+    // Sói Nguyền KHÔNG tự chọn nạn nhân riêng — chỉ quyết định CÓ biến đúng
+    // mục tiêu mà đàn Sói đã chốt (nightState.werewolf.target) thành Sói hay không.
+    nightState.cursed_wolf = { done: true, curse: !!stepData.curse, confirmed: true };
+    const wolfTargetId = currentRoom.nightState?.werewolf?.target;
+    const wolfTargetName = wolfTargetId ? currentRoom.players[wolfTargetId]?.name : null;
+    if (wolfTargetId) {
+      logs.push(makeLogEntry(round, "night", stepData.curse ? `🌀 Sói Nguyền chọn biến mục tiêu thành Sói (thay vì giết).` : `🌀 Sói Nguyền không can thiệp — mục tiêu vẫn bị giết như thường.`, "info"));
+      secretLog.push(makeSecretEntry(round, "night", "cursed_wolf_curse", "Sói Nguyền", wolfTargetName, stepData.curse ? "Biến thành Sói" : "Không can thiệp"));
+    }
   }
   if (step === "seer") {
-    const result = resolveSeer(currentRoom.players, stepData.target);
-    nightState.seer = { done: true, target: stepData.target, result };
+    const result = stepData.target ? resolveSeer(currentRoom.players, stepData.target) : null;
+    nightState.seer = { done: true, target: stepData.target || null, result, confirmed: true };
     // Store seer history (admin secret log)
     if (result) {
       seerHistory[round] = {
@@ -280,11 +336,14 @@ export async function submitNightAction(step, stepData) {
         )
       );
       secretLog.push(makeSecretEntry(round, "night", "seer_check", "Tiên Tri", result.targetName, result.isWerewolf ? "LÀ SÓI" : "Không phải sói"));
+    } else {
+      logs.push(makeLogEntry(round, "night", `🔮 Tiên Tri chọn không soi ai (bỏ qua).`, "info"));
+      secretLog.push(makeSecretEntry(round, "night", "seer_check", "Tiên Tri", null, "Bỏ qua"));
     }
   }
   let witchUsageUpdate = currentRoom.witchUsage || emptyWitchUsage();
   if (step === "witch") {
-    nightState.witch = { done: true, save: stepData.save, poisonTarget: stepData.poisonTarget || null };
+    nightState.witch = { done: true, save: !!stepData.save, poisonTarget: stepData.poisonTarget || null, confirmed: true };
     witchUsageUpdate = {
       healUsed: witchUsageUpdate.healUsed || stepData.save === true,
       poisonUsed: witchUsageUpdate.poisonUsed || !!stepData.poisonTarget,
@@ -304,7 +363,7 @@ export async function submitNightAction(step, stepData) {
     }
   }
   if (step === "flute_player") {
-    nightState.flute_player = { done: true, targets: stepData.targets || [] };
+    nightState.flute_player = { done: true, targets: stepData.targets || [], confirmed: true };
     const names = (stepData.targets || []).map((id) => currentRoom.players[id]?.name).join(", ");
     logs.push(makeLogEntry(round, "night", `🎶 Thổi Sáo đã ru ngủ: ${names || "Không ai"}`, "info"));
     secretLog.push(makeSecretEntry(round, "night", "flute_charm", "Thổi Sáo", names || null, null));
@@ -326,8 +385,10 @@ export async function submitNightAction(step, stepData) {
       logs,
       secretLog,
       nightStep: nextStep,
+      nightTimerEndAt: Date.now() + NIGHT_STEP_SECONDS * 1000,
       ...extraFields,
     });
+    manualOverrideActive = false;
   } else {
     await updateDoc(roomRefDoc, {
       players: playersUpdate,
@@ -336,6 +397,7 @@ export async function submitNightAction(step, stepData) {
       seerHistory,
       logs,
       secretLog,
+      nightTimerEndAt: null,
       ...extraFields,
     });
     await resolveNightAndGoToDay({
@@ -353,7 +415,7 @@ export async function submitNightAction(step, stepData) {
 async function resolveNightAndGoToDay(roomData) {
   const room = roomData || currentRoom;
   const round = room.round;
-  const { updatedPlayers: resolvedPlayers, deaths } = resolveNight(room.players, room.nightState);
+  const { updatedPlayers: resolvedPlayers, deaths, transforms: curseTransforms } = resolveNight(room.players, room.nightState);
   // Con Hoang: nếu mẹ nuôi vừa chết trong đêm nay → hóa Sói realtime
   const { updatedPlayers, transforms } = checkWildChildTransform(resolvedPlayers);
   let logs = [...room.logs];
@@ -366,6 +428,10 @@ async function resolveNightAndGoToDay(roomData) {
       secretLog.push(makeSecretEntry(round, "night", "death", null, d.name, DEATH_CAUSE_LABEL_VI[d.cause]));
     });
   }
+  // Sói Nguyền biến đổi vai trò (curse-transform) — thông tin BÍ MẬT, chỉ vào secretLog
+  curseTransforms.forEach((t) => {
+    secretLog.push(makeSecretEntry(round, "night", "role_transform", t.name, null, "Bị Sói Nguyền biến thành Ma Sói (thay vì bị giết)"));
+  });
   transforms.forEach((t) => {
     secretLog.push(makeSecretEntry(round, "night", "wild_child_transform", t.name, null, "Mẹ nuôi đã chết → hóa Sói"));
   });
@@ -375,7 +441,7 @@ async function resolveNightAndGoToDay(roomData) {
     const winner = checkWinCondition(updatedPlayers);
     if (winner) {
       logs.push(makeLogEntry(round, "night", WIN_LABEL_VI[winner], "system"));
-      await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", nightStep: null, winner, logs, secretLog });
+      await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", nightStep: null, winner, logs, secretLog, nightTimerEndAt: null });
       playSound("death");
       return;
     }
@@ -383,21 +449,17 @@ async function resolveNightAndGoToDay(roomData) {
     await updateDoc(roomRefDoc, {
       players: updatedPlayers,
       nightStep: null,
-      hunterPending: { hunterId: hunterDeath.id, phase: "night", round, pendingTarget: null },
+      hunterPending: { hunterId: hunterDeath.id, phase: "night", round, pendingTarget: null, confirmed: false },
       logs,
       secretLog,
+      nightTimerEndAt: null,
     });
     return;
-  }
-  // Sói Nguyền biến đổi vai trò — đây là thông tin BÍ MẬT, chỉ vào secretLog (không public)
-  const curseTarget = room.nightState?.cursed_wolf?.target;
-  if (curseTarget && updatedPlayers[curseTarget] && updatedPlayers[curseTarget].role === "werewolf") {
-    secretLog.push(makeSecretEntry(round, "night", "role_transform", updatedPlayers[curseTarget].name, null, "Bị Sói Nguyền biến thành Ma Sói"));
   }
   const winner = checkWinCondition(updatedPlayers);
   if (winner) {
     logs.push(makeLogEntry(round, "night", WIN_LABEL_VI[winner], "system"));
-    await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", nightStep: null, winner, logs, secretLog });
+    await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", nightStep: null, winner, logs, secretLog, nightTimerEndAt: null });
     playSound("death");
     return;
   }
@@ -412,6 +474,7 @@ async function resolveNightAndGoToDay(roomData) {
     timerDuration,
     timerEndAt: null,
     timerPhase: "day",
+    nightTimerEndAt: null,
     logs,
     secretLog,
   });
@@ -458,7 +521,7 @@ export async function resolveDayAndGoToNight() {
       }
       await updateDoc(roomRefDoc, {
         players: playersAfterVote,
-        hunterPending: { hunterId: hunterDeath.id, phase: "day", round, pendingTarget: null },
+        hunterPending: { hunterId: hunterDeath.id, phase: "day", round, pendingTarget: null, confirmed: false },
         logs,
         secretLog,
       });
@@ -488,6 +551,7 @@ export async function resolveDayAndGoToNight() {
     dayVotes: {},
     timerEndAt: null,
     timerPhase: null,
+    nightTimerEndAt: Date.now() + NIGHT_STEP_SECONDS * 1000,
     logs,
     secretLog,
   });
@@ -533,6 +597,7 @@ export async function submitHunterKill(targetId) {
       timerDuration,
       timerEndAt: null,
       timerPhase: "day",
+      nightTimerEndAt: null,
       logs,
       secretLog,
     });
@@ -552,6 +617,7 @@ export async function submitHunterKill(targetId) {
       dayVotes: {},
       hunterPending: null,
       timerEndAt: null,
+      nightTimerEndAt: Date.now() + NIGHT_STEP_SECONDS * 1000,
       logs,
       secretLog,
     });
@@ -559,8 +625,112 @@ export async function submitHunterKill(targetId) {
   }
 }
 // ============================================================
-// 4. PLAYER MANAGEMENT
+// 3b. AUTO WATCHER & NIGHT TIMER (Player Action Mode)
 // ============================================================
+// Đọc trạng thái "đã chọn" hiện tại từ nightState cho 1 bước, dùng để:
+// (1) tự động chốt bước khi mọi người liên quan đã xác nhận, và
+// (2) chốt theo trạng thái hiện tại khi hết giờ (chưa chọn = bỏ qua).
+function getPendingStepData(step, alive, round) {
+  const ns = currentRoom.nightState || {};
+  if (step === "werewolf") {
+    const votes = ns.werewolf?.votes || {};
+    const resolved = resolveWolfVote(votes);
+    return { target: resolved.target };
+  }
+  if (step === "cursed_wolf") {
+    return { curse: !!ns.cursed_wolf?.curse };
+  }
+  if (step === "guardian") {
+    return { protect: ns.guardian?.protect || null };
+  }
+  if (step === "seer") {
+    return { target: ns.seer?.target || null };
+  }
+  if (step === "cupid") {
+    return { lovers: ns.cupid?.lovers || [] };
+  }
+  if (step === "thief") {
+    const thiefPlayer = alive.find((p) => p.role === "thief");
+    return { thiefId: thiefPlayer?.id, chosenRole: ns.thief?.chosenRole || null };
+  }
+  if (step === "witch") {
+    return { save: !!ns.witch?.save, poisonTarget: ns.witch?.poisonTarget || null };
+  }
+  if (step === "flute_player") {
+    return { targets: ns.flute_player?.targets || [] };
+  }
+  if (step === "wild_child") {
+    const child = alive.find((p) => p.role === "wild_child");
+    return { childId: child?.id, parentId: ns.wild_child?.adoptParentId || null };
+  }
+  return {};
+}
+// Chạy mỗi giây + mỗi khi có snapshot mới. CHỈ tác động ở Player Action
+// Mode (Admin Control Mode vẫn hoàn toàn thủ công như trước — không bị
+// timer này ảnh hưởng, tránh cắt ngang lúc Admin đang nhập hộ).
+async function runAutoWatchers() {
+  if (!currentRoom || autoAdvanceInFlight || !roomRefDoc) return;
+
+  // (a) Thợ Săn tự xác nhận kéo theo → LUÔN tự xử lý ngay (bất kể Admin
+  // đang ở chế độ nào), không cần Admin bấm gì. Sửa bug: trước đây hành
+  // động này chỉ chạy ở Player Action Mode khiến Thợ Săn bị kẹt ở Admin
+  // Control Mode.
+  if (currentRoom.hunterPending) {
+    if (currentRoom.hunterPending.confirmed && !hunterManualOverride) {
+      autoAdvanceInFlight = true;
+      try { await submitHunterKill(currentRoom.hunterPending.pendingTarget || null); }
+      finally { autoAdvanceInFlight = false; }
+    }
+    return;
+  }
+
+  // (b) Auto-advance bước đêm + timer 60s — CHỈ áp dụng ở Player Action
+  // Mode (Admin Control Mode vẫn hoàn toàn thủ công, không bị giới hạn
+  // thời gian, tránh cắt ngang lúc Admin đang nhập hộ).
+  const actionMode = currentRoom.settings?.actionMode || "admin";
+  if (actionMode !== "player") return;
+  if (currentRoom.phase !== "night" || !currentRoom.nightStep || manualOverrideActive) return;
+  const step = currentRoom.nightStep;
+  const round = currentRoom.round;
+  const alive = getAlivePlayers(currentRoom.players);
+  const ns = currentRoom.nightState || {};
+  const timedOut = currentRoom.nightTimerEndAt && currentRoom.nightTimerEndAt <= Date.now();
+
+  let ready = false;
+  if (step === "werewolf") {
+    const wolves = alive.filter((p) => p.role === "werewolf" || p.role === "cursed_wolf");
+    const confirmedBy = ns.werewolf?.confirmedBy || {};
+    ready = wolves.length > 0 && wolves.every((w) => confirmedBy[w.id]);
+  } else {
+    ready = !!ns[step]?.confirmed;
+  }
+  if (!ready && !timedOut) return;
+
+  const stepData = getPendingStepData(step, alive, round);
+  if (step === "cupid" && (!stepData.lovers || stepData.lovers.length !== 2)) {
+    return; // Cupid bắt buộc ghép đủ 2 người — không thể tự chốt thiếu, chờ Admin can thiệp nếu cần
+  }
+  autoAdvanceInFlight = true;
+  try {
+    await submitNightAction(step, stepData);
+  } finally {
+    autoAdvanceInFlight = false;
+  }
+}
+function updateNightTimerDisplay() {
+  const el = $("#nightTimerDisplay");
+  if (!el) return;
+  const endAt = currentRoom?.nightTimerEndAt;
+  if (!endAt) { el.textContent = ""; return; }
+  const remaining = Math.max(0, Math.floor((endAt - Date.now()) / 1000));
+  el.textContent = `⏱️ Còn lại: ${remaining}s`;
+  el.className = `timer-display ${remaining <= 15 ? "timer-urgent" : ""}`;
+}
+export async function forceEndNightTimer() {
+  if (!currentRoom) return;
+  await updateDoc(roomRefDoc, { nightTimerEndAt: Date.now() - 1 });
+}
+
 export async function kickPlayer(playerId) {
   if (!currentRoom) return;
   const players = { ...currentRoom.players };
@@ -668,10 +838,12 @@ function renderAll() {
   renderTestModeToggle();
   renderGameSetupPanel();
   renderChatPanel();
+  renderSupportPanel();
   // Sync timer from Firestore if running
   if (currentRoom.timerEndAt && currentRoom.timerEndAt > Date.now()) {
     runLocalTimer(currentRoom.timerEndAt);
   }
+  runAutoWatchers();
 }
 function renderPhaseBanner() {
   const banner = $("#phaseBanner");
@@ -729,23 +901,18 @@ function renderNightActionPanel() {
     manualOverrideActive = false;
   }
 
-  const stepTitles = {
-    cupid: "💘 Cupid chọn 2 người yêu nhau",
-    thief: "🃏 Ăn Trộm chọn vai trò",
-    wild_child: "👩 Con Hoang chọn mẹ nuôi",
-    guardian: "🛡️ Bảo Vệ chọn người bảo vệ",
-    werewolf: "🐺 Sói chọn nạn nhân",
-    cursed_wolf: "🌀 Sói Nguyền biến 1 người thành Sói",
-    seer: "🔮 Tiên Tri soi 1 người",
-    witch: "🧪 Phù Thủy hành động",
-    flute_player: "🎶 Thổi Sáo ru ngủ 2 người",
-  };
   const title = document.createElement("h3");
   title.textContent = `${stepTitles[step] || step} (Đêm ${round})`;
   panel.appendChild(title);
 
   if (actionMode === "player" && !manualOverrideActive) {
-    panel.appendChild(buildPlayerModePanel(step, alive, round));
+    panel.appendChild(buildNightTimerWidget());
+    panel.appendChild(buildPlayerModeStatusPanel(step, alive));
+    const overrideBtn = document.createElement("button");
+    overrideBtn.className = "btn-big btn-skip";
+    overrideBtn.textContent = "🛠️ Admin thao tác thay";
+    overrideBtn.onclick = () => { manualOverrideActive = true; renderNightActionPanel(); };
+    panel.appendChild(overrideBtn);
     return;
   }
   if (actionMode === "player" && manualOverrideActive) {
@@ -758,7 +925,7 @@ function renderNightActionPanel() {
   if (step === "cupid") {
     panel.appendChild(buildMultiSelect(alive, 2, (selected) => {
       submitNightAction("cupid", { lovers: selected });
-    }, "Xác nhận ghép cặp"));
+    }, "Xác nhận ghép cặp")); // Cupid bắt buộc — không có lựa chọn bỏ qua
   } else if (step === "thief") {
     panel.appendChild(buildThiefPanel(alive));
   } else if (step === "wild_child") {
@@ -780,15 +947,13 @@ function renderNightActionPanel() {
       submitNightAction("guardian", { protect: id });
     }, true));
   } else if (step === "werewolf") {
-    const nonWolves = alive.filter((p) => p.role !== "werewolf" && p.role !== "cursed_wolf");
-    panel.appendChild(buildSingleSelect(nonWolves, "Sói cắn", (id) => {
+    // Sói được phép vote/chọn bất kỳ ai còn sống, kể cả đồng đội Sói (chiến
+    // thuật tạo niềm tin với dân) — và có thể "Bỏ qua" (không giết ai).
+    panel.appendChild(buildSingleSelect(alive, "Sói cắn", (id) => {
       submitNightAction("werewolf", { target: id });
-    }, false));
-  } else if (step === "cursed_wolf") {
-    const targets = alive.filter((p) => p.role !== "werewolf" && p.role !== "cursed_wolf");
-    panel.appendChild(buildSingleSelect(targets, "Nguyền", (id) => {
-      submitNightAction("cursed_wolf", { target: id });
     }, true));
+  } else if (step === "cursed_wolf") {
+    panel.appendChild(buildCursedWolfPanel());
   } else if (step === "seer") {
     panel.appendChild(buildSeerPanel(alive));
   } else if (step === "witch") {
@@ -799,81 +964,85 @@ function renderNightActionPanel() {
     }, "Xác nhận ru ngủ", true));
   }
 }
-// Player Action Mode: hiển thị lựa chọn hiện tại (do player tự bấm trên điện
-// thoại, ghi trực tiếp vào nightState) + nút Xác nhận để Admin chuyển bước.
-// Dùng LẠI nguyên hàm submitNightAction() — không tạo logic song song.
-function buildPlayerModePanel(step, alive, round) {
+// Sói Nguyền (v4.0): KHÔNG tự chọn nạn nhân riêng. Chỉ quyết định có biến
+// đúng mục tiêu mà đàn Sói đã chốt thành Sói (thay vì giết) hay không.
+function buildCursedWolfPanel() {
+  const wrap = document.createElement("div");
+  wrap.className = "select-wrap";
+  const wolfTargetId = currentRoom.nightState?.werewolf?.target;
+  const wolfTarget = wolfTargetId ? currentRoom.players[wolfTargetId] : null;
+  if (!wolfTargetId) {
+    wrap.innerHTML = `<p class="note-disabled">Đàn Sói đêm nay không đạt đa số tuyệt đối để giết ai (hoặc hòa phiếu/bỏ qua) — không có mục tiêu để nguyền.</p>`;
+    const btn = document.createElement("button");
+    btn.className = "btn-big btn-confirm";
+    btn.textContent = "➡️ Tiếp tục";
+    btn.onclick = () => submitNightAction("cursed_wolf", { curse: false });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+  const info = document.createElement("p");
+  info.innerHTML = `Mục tiêu đàn Sói đã chốt đêm nay: <strong>${wolfTarget?.name}</strong>. Biến người này thành Sói thay vì giết?`;
+  wrap.appendChild(info);
+  let curse = false;
+  const optWrap = document.createElement("div");
+  optWrap.className = "select-wrap";
+  const yesBtn = document.createElement("button");
+  yesBtn.className = "select-option";
+  yesBtn.textContent = "🌀 Biến thành Sói";
+  const noBtn = document.createElement("button");
+  noBtn.className = "select-option active";
+  noBtn.textContent = "❌ Không, cứ giết";
+  yesBtn.onclick = () => { curse = true; yesBtn.classList.add("active"); noBtn.classList.remove("active"); };
+  noBtn.onclick = () => { curse = false; noBtn.classList.add("active"); yesBtn.classList.remove("active"); };
+  optWrap.appendChild(yesBtn);
+  optWrap.appendChild(noBtn);
+  wrap.appendChild(optWrap);
+  const confirmBtn = document.createElement("button");
+  confirmBtn.className = "btn-big btn-confirm";
+  confirmBtn.textContent = "✅ Xác nhận";
+  confirmBtn.onclick = () => submitNightAction("cursed_wolf", { curse });
+  wrap.appendChild(confirmBtn);
+  return wrap;
+}
+// Đồng hồ đêm (chỉ hiển thị/áp dụng ở Player Action Mode — Admin Control
+// Mode vẫn hoàn toàn thủ công, không bị giới hạn thời gian).
+function buildNightTimerWidget() {
+  const wrap = document.createElement("div");
+  const display = document.createElement("div");
+  display.id = "nightTimerDisplay";
+  display.className = "timer-display";
+  wrap.appendChild(display);
+  const forceBtn = document.createElement("button");
+  forceBtn.className = "btn-big btn-danger";
+  forceBtn.textContent = "⏭ Hết giờ ngay (chốt theo lựa chọn hiện tại)";
+  forceBtn.onclick = () => forceEndNightTimer();
+  wrap.appendChild(forceBtn);
+  updateNightTimerDisplay();
+  return wrap;
+}
+// Player Action Mode: CHỈ hiển thị trạng thái (người chơi tự chọn + tự xác
+// nhận ngay trên điện thoại của họ — xem player.js). Admin không cần bấm gì,
+// hệ thống tự chốt bước khi đủ điều kiện hoặc khi hết giờ. Vẫn có nút
+// "Admin thao tác thay" (render ở ngoài) để dự phòng người chơi bị kẹt.
+function buildPlayerModeStatusPanel(step, alive) {
   const wrap = document.createElement("div");
   wrap.className = "select-wrap";
   const ns = currentRoom.nightState || {};
   const players = currentRoom.players;
 
-  const confirmBtn = (label, getStepData, disabled) => {
-    const b = document.createElement("button");
-    b.className = "btn-big btn-confirm";
-    b.textContent = label;
-    b.disabled = !!disabled;
-    b.style.marginTop = "10px";
-    b.onclick = () => submitNightAction(step, getStepData());
-    return b;
-  };
-  const overrideBtn = () => {
-    const b = document.createElement("button");
-    b.className = "btn-big btn-skip";
-    b.textContent = "🛠️ Admin thao tác thay";
-    b.onclick = () => { manualOverrideActive = true; renderNightActionPanel(); };
-    return b;
-  };
-
   if (step === "werewolf") {
+    const wolves = alive.filter((p) => p.role === "werewolf" || p.role === "cursed_wolf");
     const votes = ns.werewolf?.votes || {};
-    const tally = {};
-    Object.values(votes).forEach((t) => { if (t) tally[t] = (tally[t] || 0) + 1; });
-    let rows = Object.entries(votes).map(([wid, tid]) =>
-      `<div class="vote-row"><span>${players[wid]?.name || "?"}</span><span>${tid ? players[tid]?.name : "(chưa chọn)"}</span></div>`
+    const confirmedBy = ns.werewolf?.confirmedBy || {};
+    const confirmedCount = wolves.filter((w) => confirmedBy[w.id]).length;
+    const rows = wolves.map((w) =>
+      `<div class="vote-row"><span>${w.name} ${confirmedBy[w.id] ? "✅" : "⏳"}</span><span>${votes[w.id] ? players[votes[w.id]]?.name : "(chưa chọn)"}</span></div>`
     ).join("");
-    if (!rows) rows = `<p class="note-disabled">Chưa có Sói nào chọn.</p>`;
-    wrap.innerHTML = `<p>🐺 Các Sói đang chọn realtime:</p>${rows}`;
-    const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-    const best = entries[0]?.[0] || null;
-    wrap.appendChild(confirmBtn(best ? `✅ Chốt mục tiêu: ${players[best]?.name}` : "✅ Chốt (chưa ai chọn)", () => ({ target: best })));
-  } else if (step === "guardian") {
-    const protect = ns.guardian?.protect;
-    wrap.innerHTML = `<p>🛡️ Bảo Vệ đang chọn: <strong>${protect ? players[protect]?.name : "(chưa chọn)"}</strong></p>`;
-    wrap.appendChild(confirmBtn("✅ Xác nhận", () => ({ protect: protect || null })));
-  } else if (step === "cursed_wolf") {
-    const target = ns.cursed_wolf?.target;
-    wrap.innerHTML = `<p>🌀 Sói Nguyền đang chọn: <strong>${target ? players[target]?.name : "(chưa chọn)"}</strong></p>`;
-    wrap.appendChild(confirmBtn("✅ Xác nhận", () => ({ target: target || null })));
-  } else if (step === "seer") {
-    const target = ns.seer?.target;
-    wrap.innerHTML = `<p>🔮 Tiên Tri đang chọn soi: <strong>${target ? players[target]?.name : "(chưa chọn)"}</strong></p>`;
-    wrap.appendChild(confirmBtn("✅ Xác nhận", () => ({ target: target || null }), !target));
-  } else if (step === "cupid") {
-    const lovers = ns.cupid?.lovers || [];
-    wrap.innerHTML = `<p>💘 Cupid đang chọn: <strong>${lovers.length ? lovers.map((id) => players[id]?.name).join(" 💞 ") : "(chưa chọn đủ 2 người)"}</strong></p>`;
-    wrap.appendChild(confirmBtn("✅ Xác nhận ghép cặp", () => ({ lovers }), lovers.length !== 2));
-  } else if (step === "thief") {
-    const thiefPlayer = alive.find((p) => p.role === "thief");
-    const chosenRole = ns.thief?.chosenRole;
-    wrap.innerHTML = `<p>🃏 ${thiefPlayer?.name || "Ăn Trộm"} đang chọn: <strong>${chosenRole ? (ROLE_LABEL_VI[chosenRole] || chosenRole) : "(giữ nguyên / chưa chọn)"}</strong></p>`;
-    wrap.appendChild(confirmBtn("✅ Xác nhận", () => ({ thiefId: thiefPlayer?.id, chosenRole: chosenRole || null })));
-  } else if (step === "witch") {
-    const save = !!ns.witch?.save;
-    const poisonTarget = ns.witch?.poisonTarget;
-    wrap.innerHTML = `<p>🧪 Phù Thủy: ${save ? "Đã chọn CỨU" : "Không cứu"}; ${poisonTarget ? `Độc: ${players[poisonTarget]?.name}` : "Không độc ai"}</p>`;
-    wrap.appendChild(confirmBtn("✅ Xác nhận", () => ({ save, poisonTarget: poisonTarget || null })));
-  } else if (step === "flute_player") {
-    const targets = ns.flute_player?.targets || [];
-    wrap.innerHTML = `<p>🎶 Thổi Sáo đang chọn: <strong>${targets.length ? targets.map((id) => players[id]?.name).join(", ") : "(chưa chọn)"}</strong></p>`;
-    wrap.appendChild(confirmBtn("✅ Xác nhận", () => ({ targets })));
-  } else if (step === "wild_child") {
-    const child = alive.find((p) => p.role === "wild_child");
-    const parentId = ns.wild_child?.adoptParentId;
-    wrap.innerHTML = `<p>👩 Con Hoang đang chọn mẹ nuôi: <strong>${parentId ? players[parentId]?.name : "(chưa chọn)"}</strong></p>`;
-    wrap.appendChild(confirmBtn("✅ Xác nhận", () => ({ childId: child?.id, parentId: parentId || null })));
+    wrap.innerHTML = `<p>🐺 Sói đang tự chọn realtime trên điện thoại (${confirmedCount}/${wolves.length} đã xác nhận):</p>${rows || `<p class="note-disabled">Chưa có Sói nào.</p>`}`;
+  } else {
+    const confirmed = !!ns[step]?.confirmed;
+    wrap.innerHTML = `<p>${stepTitles[step] || step}: ${confirmed ? "✅ Đã xác nhận — đang xử lý..." : "⏳ Đang chờ người chơi tự chọn & xác nhận trên điện thoại..."}</p>`;
   }
-  wrap.appendChild(overrideBtn());
   return wrap;
 }
 function buildSingleSelect(alivePlayers, btnLabel, onConfirm, allowSkip) {
@@ -885,6 +1054,12 @@ function buildSingleSelect(alivePlayers, btnLabel, onConfirm, allowSkip) {
     opt.className = "select-option";
     opt.textContent = p.name;
     opt.onclick = () => {
+      if (selectedId === p.id) {
+        // Bấm lại chính người đã chọn → hủy lựa chọn (chưa Xác nhận thì chưa khóa)
+        wrap.querySelectorAll(".select-option").forEach((b) => b.classList.remove("active"));
+        selectedId = null;
+        return;
+      }
       wrap.querySelectorAll(".select-option").forEach((b) => b.classList.remove("active"));
       opt.classList.add("active");
       selectedId = p.id;
@@ -1005,7 +1180,7 @@ function buildSeerPanel(alivePlayers) {
   }
   wrap.appendChild(buildSingleSelect(alivePlayers, "Soi", (id) => {
     submitNightAction("seer", { target: id });
-  }, false));
+  }, true));
   return wrap;
 }
 function buildWitchPanel(alivePlayers) {
@@ -1085,25 +1260,24 @@ function renderHunterPanel() {
   }
   panel.classList.remove("hidden");
   const hunter = currentRoom.players[pending.hunterId];
-  panel.innerHTML = `<h3>🏹 Thợ Săn "${hunter?.name || "?"}" vừa chết! Chọn người kéo theo:</h3>`;
+  panel.innerHTML = `<h3>🏹 Thợ Săn "${hunter?.name || "?"}" vừa chết!</h3>`;
 
   const pendingKey = `${pending.hunterId}_${pending.round}_${pending.phase}`;
   if (pendingKey !== lastHunterPendingKey) {
     lastHunterPendingKey = pendingKey;
     hunterManualOverride = false;
   }
-  const actionMode = currentRoom.settings?.actionMode || "admin";
 
-  if (actionMode === "player" && !hunterManualOverride) {
+  // Thợ Săn LUÔN tự chọn người kéo theo ngay trên điện thoại của họ (xem
+  // player.js) — không cần biết Admin đang ở chế độ nào. Ở đây Admin chỉ
+  // theo dõi trạng thái + có nút thao tác thay nếu Thợ Săn bị kẹt/AFK.
+  if (!hunterManualOverride) {
     const target = pending.pendingTarget;
     const info = document.createElement("p");
-    info.innerHTML = `Thợ Săn đang chọn: <strong>${target ? currentRoom.players[target]?.name : "(chưa chọn)"}</strong>`;
+    info.innerHTML = pending.confirmed
+      ? `✅ Thợ Săn đã tự xác nhận: <strong>${target ? currentRoom.players[target]?.name : "Không kéo ai"}</strong> — đang xử lý...`
+      : `⏳ Đang chờ Thợ Săn tự chọn trên điện thoại: <strong>${target ? currentRoom.players[target]?.name : "(chưa chọn)"}</strong>`;
     panel.appendChild(info);
-    const confirmBtn = document.createElement("button");
-    confirmBtn.className = "btn-big btn-confirm";
-    confirmBtn.textContent = "✅ Xác nhận kéo theo";
-    confirmBtn.onclick = () => submitHunterKill(target || null);
-    panel.appendChild(confirmBtn);
     const overrideBtn = document.createElement("button");
     overrideBtn.className = "btn-big btn-skip";
     overrideBtn.textContent = "🛠️ Admin thao tác thay";
@@ -1386,6 +1560,54 @@ function renderChatPanel() {
     }
     loverChatEl.classList.remove("hidden");
   }
+}
+// Chat riêng Player ↔ Admin (hỏi luật / báo lỗi / cần hỗ trợ). Mỗi player
+// có 1 thread riêng (chat.support.{playerId}), Admin xem & trả lời từng
+// thread. Hoạt động ở MỌI phase (lobby/đêm/ngày/kết thúc).
+function renderSupportPanel() {
+  const panel = $("#supportPanel");
+  if (!panel) return;
+  const support = currentRoom.chat?.support || {};
+  const playerIds = Object.keys(support).filter((id) => (support[id] || []).length > 0);
+  if (playerIds.length === 0) {
+    panel.innerHTML = `<h2>💬 Hỗ trợ Player</h2><p class="note-disabled">Chưa có player nào cần hỗ trợ.</p>`;
+    return;
+  }
+  let html = `<h2>💬 Hỗ trợ Player</h2>`;
+  playerIds.forEach((pid) => {
+    const name = currentRoom.players[pid]?.name || "(đã rời phòng)";
+    const thread = support[pid] || [];
+    html += `
+      <div class="support-thread">
+        <h3>${name}</h3>
+        <div class="chat-messages support-msgs" data-pid="${pid}">
+          ${thread.slice(-15).map((m) => `<div class="chat-msg ${m.from === "admin" ? "chat-mine" : ""}"><strong>${m.from === "admin" ? "Bạn" : name}:</strong> ${escapeHtml(m.text)}</div>`).join("")}
+        </div>
+        <div class="chat-input-row">
+          <input type="text" class="support-reply-input" data-pid="${pid}" placeholder="Trả lời ${name}..." />
+          <button class="btn-send support-reply-send" data-pid="${pid}">Gửi</button>
+        </div>
+      </div>
+    `;
+  });
+  panel.innerHTML = html;
+  panel.querySelectorAll(".support-msgs").forEach((el) => { el.scrollTop = el.scrollHeight; });
+  panel.querySelectorAll(".support-reply-send").forEach((btn) => {
+    btn.onclick = async () => {
+      const pid = btn.dataset.pid;
+      const input = panel.querySelector(`.support-reply-input[data-pid="${pid}"]`);
+      if (!input?.value.trim()) return;
+      const thread = [...((currentRoom.chat?.support?.[pid]) || [])];
+      thread.push({ from: "admin", name: "Admin", text: input.value.trim(), time: Date.now() });
+      await updateDoc(roomRefDoc, { [`chat.support.${pid}`]: thread });
+      input.value = "";
+    };
+  });
+  panel.querySelectorAll(".support-reply-input").forEach((input) => {
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") panel.querySelector(`.support-reply-send[data-pid="${input.dataset.pid}"]`)?.click();
+    };
+  });
 }
 function escapeHtml(text) {
   return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
