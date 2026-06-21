@@ -38,30 +38,8 @@
       <!-- WOLF TEAM INFO (chỉ hiện cho Sói/Sói Nguyền còn sống) -->
       <div id="wolfTeamSection" class="panel hidden"></div>
 
-      <!-- NIGHT ACTION (Player Action Mode — chỉ hiện khi Admin bật chế độ "Người chơi tự bấm") -->
-      <div id="nightActionPlayer" class="panel hidden"></div>
-
-      <!-- HUNTER PULL (Thợ Săn luôn tự chọn người kéo theo ngay khi chết) -->
-      <div id="hunterPullPlayer" class="panel hidden"></div>
-
-      <!-- LOVER INFO -->
-      <div id="loverInfoSection" class="panel hidden"></div>
-
-      <!-- SEER HISTORY (chỉ hiện cho Tiên Tri) -->
-      <div id="seerHistorySection" class="panel hidden"></div>
-
-      <!-- MY VOTE COUNT (ban ngày: số phiếu bản thân đang nhận) -->
-      <div id="myVoteCountDisplay" class="note-disabled hidden" style="text-align:center;margin-bottom:8px"></div>
-
-      <!-- ALIVE PLAYER LIST -->
-      <div class="panel">
-        <div id="aliveListPlayer"></div>
-      </div>
-
-      <!-- VOTING AREA (ban ngày, còn sống) -->
-      <div id="votingArea" class="panel hidden"></div>
-
-      <!-- WOLF CHAT (chỉ Sói thấy, ban đêm) -->
+      <!-- WOLF CHAT (chỉ Sói thấy, ban đêm) — đặt NGAY sau Wolf Team để Sói luôn thấy ngay,
+           không bị các khung khác (VD: thông tin Cặp Đôi) chen vào đẩy xuống. -->
       <div id="wolfChatSection" class="panel hidden">
         <h3>🐺 Sói Chat (chỉ Sói thấy)</h3>
         <div class="chat-messages" id="wolfChatMessages"></div>
@@ -71,7 +49,16 @@
         </div>
       </div>
 
-      <!-- LOVER CHAT -->
+      <!-- NIGHT ACTION (Player Action Mode — chỉ hiện khi Admin bật chế độ "Người chơi tự bấm") -->
+      <div id="nightActionPlayer" class="panel hidden"></div>
+
+      <!-- HUNTER PULL (Thợ Săn luôn tự chọn người kéo theo ngay khi chết) -->
+      <div id="hunterPullPlayer" class="panel hidden"></div>
+
+      <!-- LOVER INFO -->
+      <div id="loverInfoSection" class="panel hidden"></div>
+
+      <!-- LOVER CHAT — đặt NGAY sau Lover Info để cặp đôi luôn thấy ngay. -->
       <div id="loverChatSection" class="panel hidden">
         <h3>💞 Cặp Đôi Chat (chỉ 2 người yêu thấy)</h3>
         <div class="chat-messages" id="loverChatMessages"></div>
@@ -80,6 +67,21 @@
           <button id="loverChatSend" class="btn-send">Gửi</button>
         </div>
       </div>
+
+      <!-- SEER HISTORY (chỉ hiện cho Tiên Tri) -->
+      <div id="seerHistorySection" class="panel hidden"></div>
+
+      <!-- MY VOTE COUNT (ban ngày: số phiếu bản thân đang nhận) — banner nổi bật, không dùng
+           style chữ mờ nữa để tránh bị bỏ sót. -->
+      <div id="myVoteCountDisplay" class="vote-count-banner hidden"></div>
+
+      <!-- ALIVE PLAYER LIST -->
+      <div class="panel">
+        <div id="aliveListPlayer"></div>
+      </div>
+
+      <!-- VOTING AREA (ban ngày, còn sống) -->
+      <div id="votingArea" class="panel hidden"></div>
 
       <!-- DEBUG REVEAL -->
       <div id="debugRevealSection" class="panel hidden"></div>

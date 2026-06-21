@@ -676,3 +676,22 @@ button {
 #wolfTeamSection .player-chip {
   font-weight: 700;
 }
+
+/* ---------- MY VOTE COUNT BANNER ---------- */
+.vote-count-banner {
+  text-align: center;
+  padding: 10px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 12px;
+  background: var(--bg-panel-light);
+  border: 1px solid var(--border-color);
+  color: var(--text-light);
+}
+.vote-count-banner.has-votes {
+  background: rgba(192, 57, 43, 0.18);
+  border-color: var(--accent-blood);
+  color: #ff8f80;
+  animation: pulse 1.8s infinite;
+}

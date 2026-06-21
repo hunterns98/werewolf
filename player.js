@@ -655,7 +655,9 @@ function renderWolfTeamInfo(me, isAlive) {
   el.innerHTML = `<h3>🐺 Đồng đội Sói:</h3><div class="player-list-compact">${chips}</div>`;
 }
 
-// Player tự thấy số phiếu mình đang nhận vào ban ngày (point #9 feedback)
+// Player tự thấy số phiếu mình đang nhận vào ban ngày (point #9 feedback) —
+// dùng banner nổi bật (không phải chữ mờ note-disabled) để không bị bỏ sót,
+// và tự nhấn mạnh thêm (đổi màu/nhịp nháy nhẹ) khi đang có ít nhất 1 phiếu.
 function renderMyVoteCount(isAlive) {
   const el = $("#myVoteCountDisplay");
   if (!el) return;
@@ -666,6 +668,7 @@ function renderMyVoteCount(isAlive) {
   const votes = currentRoom.dayVotes || {};
   const myVotes = Object.values(votes).filter((v) => v === myId).length;
   el.classList.remove("hidden");
+  el.classList.toggle("has-votes", myVotes > 0);
   el.textContent = `📊 Bạn đang bị vote: ${myVotes} phiếu`;
 }
 
