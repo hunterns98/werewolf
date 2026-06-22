@@ -1,0 +1,967 @@
+/* ============================================================
+   STYLES.CSS — DÙNG CHUNG CHO ADMIN & PLAYER
+   ============================================================
+   UI Phase 1 (nâng cấp giao diện/UX — KHÔNG đổi logic game):
+   - Hệ thống background theo phase (night/day) + overlay tối
+   - Màn vào phòng dạng "game show" (logo, card nổi, glow, fade)
+   - Player card kiểu "Ngôi Làng" (avatar, trạng thái rõ ràng)
+   - Phase banner dạng HUD (icon + dòng mô tả)
+   - Animation nhẹ (fade/slide/hover) — không dùng animation nặng
+   - Asset system: ảnh nền/logo/role-icon load từ assets/, tự ẩn
+     gọn nếu chưa có ảnh (không bao giờ hiện icon vỡ)
+   Toàn bộ class/id cũ được GIỮ NGUYÊN tên — chỉ nâng cấp thuộc
+   tính hiển thị — để admin.js/player.js không cần đổi logic.
+   ============================================================ */
+
+:root {
+  /* ---- Bảng màu gốc (giữ nguyên, mọi nơi đang dùng vẫn chạy đúng) ---- */
+  --bg-dark: #0f1420;
+  --bg-panel: #1a2236;
+  --bg-panel-light: #232d47;
+  --accent-blood: #c0392b;
+  --accent-moon: #f1c40f;
+  --accent-sun: #e67e22;
+  --accent-good: #2ecc71;
+  --text-light: #e8eaf0;
+  --text-muted: #8b93a8;
+  --border-color: #2e3a5c;
+  --shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  --radius: 12px;
+
+  /* ---- UI Phase 1: token mở rộng cho cảm giác "board game ánh trăng" ---- */
+  --font-display: Georgia, "Noto Serif", "Times New Roman", serif;
+  --night-scrim: linear-gradient(180deg, rgba(8, 10, 24, 0.50) 0%, rgba(8, 10, 22, 0.90) 100%);
+  --day-scrim: linear-gradient(180deg, rgba(35, 20, 8, 0.40) 0%, rgba(18, 12, 10, 0.86) 100%);
+  --glow-moon: rgba(241, 196, 15, 0.35);
+  --glow-cool: rgba(140, 170, 255, 0.28);
+  --glow-blood: rgba(192, 57, 43, 0.35);
+  --radius-lg: 18px;
+  --shadow-deep: 0 14px 44px rgba(0, 0, 0, 0.55);
+  --ease-soft: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  /* Fallback nếu vì lý do gì .bg-layer không tải được — không bao giờ trống nền */
+  background: radial-gradient(circle at top, #1c2440 0%, var(--bg-dark) 70%);
+  color: var(--text-light);
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+h1, h2, h3 {
+  margin: 0 0 8px 0;
+}
+
+/* ---------- CONTAINER ---------- */
+.container {
+  max-width: 720px;
+  margin: 0 auto;
+  position: relative;
+}
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+  animation: panelFadeIn 0.35s var(--ease-soft) both;
+}
+
+/* ---------- JOIN SCREEN ("màn hình game show") ---------- */
+.join-card {
+  background: linear-gradient(165deg, rgba(28, 36, 58, 0.94), rgba(13, 17, 28, 0.97));
+  border: 1px solid rgba(241, 196, 15, 0.22);
+  border-radius: var(--radius-lg);
+  padding: 32px 24px;
+  text-align: center;
+  box-shadow: var(--shadow-deep), inset 0 0 70px rgba(241, 196, 15, 0.04);
+  max-width: 420px;
+  margin: 48px auto;
+  animation: fadeInUp 0.6s var(--ease-soft) both;
+}
+
+.join-card h1 {
+  font-family: var(--font-display);
+  font-size: 2.1rem;
+  letter-spacing: 2px;
+  margin-bottom: 4px;
+  text-shadow: 0 0 18px var(--glow-moon), 0 2px 3px rgba(0, 0, 0, 0.6);
+}
+
+.join-card p.subtitle {
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+/* Logo emblem — vòng tròn dát viền vàng phát sáng. Có ảnh thì hiện ảnh,
+   chưa có ảnh thì hiện chữ "🐺" thay thế (graceful fallback, không vỡ layout). */
+.logo-emblem {
+  width: 108px;
+  height: 108px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 35% 28%, #2c3e6e, #0f1420 78%);
+  border: 3px solid var(--accent-moon);
+  box-shadow: 0 0 0 6px rgba(241, 196, 15, 0.10), 0 0 36px var(--glow-moon), var(--shadow-deep);
+  overflow: hidden;
+  animation: emblemGlow 3.2s ease-in-out infinite;
+}
+.logo-emblem .logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.logo-emblem .logo-fallback {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 50px;
+  filter: drop-shadow(0 0 10px rgba(241, 196, 15, 0.55));
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-panel-light);
+  color: var(--text-light);
+  font-size: 1rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent-moon);
+  box-shadow: 0 0 0 3px rgba(241, 196, 15, 0.18);
+}
+
+/* ---------- BUTTONS ---------- */
+button {
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+
+.btn-big {
+  width: 100%;
+  padding: 16px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  border-radius: 10px;
+  margin: 6px 0;
+  transition: transform 0.15s var(--ease-soft), box-shadow 0.25s, filter 0.2s;
+}
+.btn-big:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.btn-big:active {
+  transform: scale(0.97);
+}
+
+.btn-confirm {
+  background: linear-gradient(135deg, #2ecc71, #27ae60);
+  color: #fff;
+}
+.btn-skip {
+  background: var(--bg-panel-light);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+.btn-danger {
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
+  color: #fff;
+}
+.btn-primary {
+  background: linear-gradient(135deg, #3498db, #2980b9);
+  color: #fff;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+}
+.btn-row button {
+  flex: 1;
+}
+
+/* ---------- PHASE BANNER (dạng HUD game) ---------- */
+.phase-banner {
+  text-align: center;
+  padding: 18px 16px;
+  font-size: 1.4rem;
+  font-family: var(--font-display);
+  font-weight: 800;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  letter-spacing: 0.5px;
+  transition: background 0.5s var(--ease-soft);
+}
+.phase-lobby { background: var(--bg-panel-light); color: var(--text-muted); }
+.phase-night { background: linear-gradient(135deg, #1a1f3a, #2c3e6e); color: #c9d6ff; box-shadow: 0 0 24px rgba(80,100,255,0.22); }
+.phase-day   { background: linear-gradient(135deg, #e67e22, #f39c12); color: #2b1c00; box-shadow: 0 0 24px rgba(243,156,18,0.28); }
+.phase-ended { background: linear-gradient(135deg, #8e44ad, #c0392b); color: #fff; }
+
+.phase-banner .phase-sub {
+  display: block;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  opacity: 0.85;
+  margin-top: 4px;
+}
+
+.phase-info {
+  text-align: center;
+  padding: 12px 10px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-weight: 600;
+  background: var(--bg-panel-light);
+  transition: background 0.4s;
+}
+.phase-info .phase-sub {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ---------- PLAYER LIST ("Ngôi Làng") ---------- */
+.player-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(35,45,71,0.92), rgba(24,31,49,0.92));
+  margin-bottom: 8px;
+  border: 1px solid rgba(255,255,255,0.05);
+  border-left: 4px solid var(--accent-good);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.22);
+  transition: transform 0.15s, border-color 0.3s, filter 0.3s;
+  animation: rowSlideIn 0.3s var(--ease-soft) both;
+}
+.player-row:hover {
+  transform: translateX(2px);
+}
+.player-row.dead {
+  opacity: 0.55;
+  text-decoration: line-through;
+  border-left-color: var(--accent-blood);
+  filter: grayscale(0.55);
+}
+.player-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.player-role { color: var(--accent-moon); font-size: 0.9rem; display: flex; align-items: center; gap: 4px; }
+.player-status-waiting {
+  color: var(--accent-good);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.btn-kick {
+  background: var(--accent-blood);
+  color: #fff;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+/* Avatar tròn — chữ cái đầu tên làm mặc định, nhận ảnh assets/ui/default-avatar.png nếu có */
+.avatar-circle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3a4a73, #1c2440);
+  border: 1px solid rgba(241,196,15,0.35);
+  color: var(--accent-moon);
+  font-weight: 800;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.avatar-circle .avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.avatar-circle .avatar-initial {
+  position: relative;
+  z-index: 0;
+}
+
+/* Role icon nhỏ cạnh tên role — tự ẩn (onerror) nếu chưa có file ảnh */
+.role-icon {
+  display: inline-block;
+  vertical-align: middle;
+  object-fit: contain;
+}
+
+/* Phase icon — đặt cạnh emoji có sẵn, không thay thế emoji */
+.phase-icon {
+  display: inline-block;
+  vertical-align: middle;
+  object-fit: contain;
+  margin-right: 4px;
+}
+
+/* ---------- SELECT OPTIONS (chọn người trong night action / vote) ---------- */
+.select-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.select-option {
+  padding: 10px 16px;
+  border-radius: 20px;
+  background: var(--bg-panel-light);
+  color: var(--text-light);
+  border: 1px solid var(--border-color);
+  font-size: 0.95rem;
+  transition: all 0.15s ease;
+}
+.select-option.active {
+  background: var(--accent-moon);
+  color: #1a1a1a;
+  border-color: var(--accent-moon);
+  font-weight: 700;
+  transform: scale(1.05);
+}
+.action-row {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.note-disabled {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.witch-info {
+  background: var(--bg-panel-light);
+  padding: 10px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+/* ---------- VOTE TALLY ---------- */
+.vote-tally {
+  margin: 10px 0;
+}
+.vote-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-panel-light);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+.vote-count {
+  color: var(--accent-moon);
+  font-weight: 700;
+}
+
+/* ---------- LOGS ---------- */
+.log-panel {
+  max-height: 320px;
+  overflow-y: auto;
+  background: #0c0f1a;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 0.85rem;
+  font-family: "Consolas", monospace;
+}
+.log-entry {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+.log-entry.log-death { color: var(--accent-blood); font-weight: 600; }
+.log-entry.log-system { color: var(--accent-moon); font-weight: 700; }
+.log-entry.log-vote { color: var(--accent-sun); }
+.log-entry.log-info { color: var(--text-muted); }
+
+/* ---------- WIN SCREEN ---------- */
+#winScreen, #winBannerPlayer {
+  text-align: center;
+  padding: 30px;
+  background: linear-gradient(135deg, #8e44ad, #2c3e6e);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  animation: popIn 0.4s ease;
+}
+#winScreen h1, #winBannerPlayer h1 {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+
+@keyframes popIn {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* ---------- PLAYER SPECIFIC ---------- */
+.status-bar {
+  text-align: center;
+  padding: 12px;
+  border-radius: 10px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  transition: background 0.4s, color 0.4s;
+}
+.status-bar.alive { background: rgba(46, 204, 113, 0.15); color: var(--accent-good); }
+.status-bar.dead { background: rgba(192, 57, 43, 0.2); color: var(--accent-blood); }
+
+.role-card {
+  text-align: center;
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, #2c3e6e, #1a2236);
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-deep);
+  border: 1px solid rgba(241,196,15,0.12);
+  animation: fadeInUp 0.45s var(--ease-soft) both;
+}
+.role-name {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--accent-moon);
+  margin-bottom: 8px;
+  text-shadow: 0 0 16px var(--glow-moon);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.role-desc {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.lover-badge {
+  display: inline-block;
+  background: rgba(231, 76, 60, 0.2);
+  color: #ff8fa3;
+  padding: 6px 14px;
+  border-radius: 20px;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.alive-counter {
+  text-align: center;
+  padding: 8px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+/* Death overlay - full screen "You are dead" */
+.death-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(10, 5, 5, 0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  animation: fadeIn 0.6s ease;
+}
+.death-overlay h1 {
+  font-family: var(--font-display);
+  font-size: 3rem;
+  color: var(--accent-blood);
+  margin-bottom: 8px;
+  text-shadow: 0 0 24px var(--glow-blood);
+}
+.death-overlay p {
+  color: var(--text-muted);
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ---------- ROOM CODE DISPLAY ---------- */
+.room-code-box {
+  text-align: center;
+  background: var(--bg-panel-light);
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--accent-moon);
+}
+
+.test-mode-badge {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: normal;
+  color: var(--accent-blood);
+  background: rgba(192, 57, 43, 0.15);
+  border: 1px solid var(--accent-blood);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+/* ---------- TOGGLE SWITCH ---------- */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+}
+.toggle-row label {
+  font-weight: 600;
+}
+
+/* ---------- RESPONSIVE ---------- */
+@media (max-width: 480px) {
+  .join-card { margin: 24px auto; padding: 22px 16px; }
+  .logo-emblem { width: 88px; height: 88px; }
+  .join-card h1 { font-size: 1.7rem; }
+  .phase-banner { font-size: 1.15rem; padding: 14px 10px; }
+  .role-name { font-size: 1.4rem; }
+  .btn-row { flex-wrap: wrap; }
+  .btn-row button { flex: 1 1 100%; }
+  .select-option { padding: 10px 14px; font-size: 0.92rem; }
+  .chat-input-row input { font-size: 0.95rem; }
+}
+
+/* Đảm bảo input/nút luôn đủ to để bấm chính xác trên điện thoại (a11y/touch target) */
+@media (pointer: coarse) {
+  .btn-big, .select-option, .btn-send, .vote-btn { min-height: 44px; }
+}
+
+/* ============================================================
+   ADDITIONS v2.0
+   ============================================================ */
+
+/* ---------- GAME SETUP PANEL ---------- */
+.team-summary {
+  display: flex;
+  gap: 16px;
+  padding: 10px;
+  background: var(--bg-panel-light);
+  border-radius: 8px;
+  margin: 10px 0;
+  font-weight: 700;
+  flex-wrap: wrap;
+}
+
+.role-options {
+  margin-top: 10px;
+}
+.role-options .toggle-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* ---------- SEER HISTORY ---------- */
+.seer-history {
+  background: var(--bg-panel-light);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.seer-history-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.9rem;
+  color: var(--text-light);
+}
+.seer-history-row:last-child { border-bottom: none; }
+
+/* ---------- LOVER CARD ---------- */
+.lover-card {
+  background: linear-gradient(135deg, rgba(231,76,60,0.15), rgba(155,89,182,0.15));
+  border: 1px solid rgba(231,76,60,0.4);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  line-height: 1.8;
+}
+.lover-death-notice {
+  color: var(--accent-blood);
+  font-weight: 700;
+  margin-top: 6px;
+  animation: pulse 1.5s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ---------- PLAYER LIST COMPACT ---------- */
+.player-list-compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.player-chip {
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: filter 0.3s, opacity 0.3s;
+}
+.player-chip.alive {
+  background: rgba(46,204,113,0.15);
+  color: var(--accent-good);
+  border: 1px solid rgba(46,204,113,0.3);
+}
+.player-chip.dead {
+  background: rgba(192,57,43,0.15);
+  color: var(--accent-blood);
+  border: 1px solid rgba(192,57,43,0.3);
+  text-decoration: line-through;
+  filter: grayscale(0.4);
+}
+
+/* ---------- CHAT ---------- */
+.chat-messages {
+  max-height: 200px;
+  overflow-y: auto;
+  background: #0c0f1a;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  font-size: 0.88rem;
+}
+.chat-msg {
+  padding: 5px 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  color: var(--text-light);
+  line-height: 1.4;
+}
+.chat-msg.chat-mine {
+  background: rgba(52,152,219,0.2);
+  text-align: right;
+}
+.chat-input-row {
+  display: flex;
+  gap: 6px;
+}
+.chat-input-row input {
+  flex: 1;
+  margin-bottom: 0;
+}
+.btn-send {
+  background: var(--accent-moon);
+  color: #1a1a1a;
+  border-radius: 8px;
+  padding: 0 16px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  transition: filter 0.15s;
+}
+.btn-send:hover { filter: brightness(1.08); }
+
+/* ---------- TIMER ---------- */
+.timer-display {
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 800;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--bg-panel-light);
+  color: var(--text-light);
+  margin-bottom: 8px;
+}
+.timer-display.timer-urgent {
+  background: rgba(192,57,43,0.3);
+  color: #ff6b6b;
+  animation: blink 0.8s step-end infinite;
+}
+@keyframes blink {
+  50% { opacity: 0.6; }
+}
+
+/* ---------- HUNTER PANEL ---------- */
+#hunterPanel {
+  border: 2px solid var(--accent-blood);
+  animation: popIn 0.3s ease;
+}
+#hunterPanel h3 {
+  color: var(--accent-blood);
+}
+
+/* ---------- VOTE BTN UPDATE ---------- */
+.vote-btn {
+  width: 100%;
+  margin-bottom: 6px;
+  text-align: left;
+  padding: 12px 16px;
+  border-radius: 10px;
+}
+
+/* ---------- WITCH PANEL ---------- */
+.witch-panel .witch-info {
+  font-weight: 600;
+}
+
+/* ============================================================
+   ADDITIONS v3.0
+   ============================================================
+   - Timeline (Lịch sử bí mật / Toàn bộ lịch sử trận đấu)
+   - Lover role info line (Cupid bền vững qua biến đổi vai trò)
+   - Manual Role Editor (Role Balance)
+   - Disabled chat input khi người chơi đã chết
+   - Nhấn nhẹ khu vực hành động đêm của Player Action Mode
+   ============================================================ */
+
+/* ---------- TIMELINE / SECRET HISTORY ---------- */
+.timeline-header {
+  background: var(--bg-panel-light);
+  color: var(--accent-moon);
+  font-weight: 800;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin: 14px 0 8px;
+  letter-spacing: 0.3px;
+}
+.timeline-header:first-child {
+  margin-top: 0;
+}
+
+/* ---------- LOVER ROLE INFO ---------- */
+.lover-role-info {
+  margin-top: 6px;
+  font-size: 0.9rem;
+  color: var(--text-light);
+}
+
+/* ---------- MANUAL ROLE EDITOR ---------- */
+.manual-role-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-panel-light);
+  margin-bottom: 6px;
+}
+.manual-role-row input[type="number"] {
+  width: 70px;
+  padding: 8px;
+  margin-bottom: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-dark);
+  color: var(--text-light);
+  text-align: center;
+  font-size: 0.95rem;
+}
+
+/* ---------- DISABLED CHAT (người chơi đã chết) ---------- */
+.chat-input-row input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.chat-input-row button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- NIGHT ACTION PLAYER (Player Action Mode) ---------- */
+#nightActionPlayer, #hunterPullPlayer {
+  border: 2px solid var(--accent-moon);
+  animation: popIn 0.3s ease;
+}
+#nightActionPlayer h3, #hunterPullPlayer h3 {
+  color: var(--accent-moon);
+}
+
+/* ---------- END GAME REVEAL SECTIONS ---------- */
+#endGameRevealSection, #timelineRevealSection {
+  animation: popIn 0.4s ease;
+}
+
+/* ============================================================
+   ADDITIONS v4.0
+   ============================================================
+   - Support chat threads (Admin trả lời riêng từng Player)
+   - Trạng thái khóa sau khi Player tự xác nhận hành động đêm
+   - Đồng đội Sói / số vote bản thân
+   ============================================================ */
+
+/* ---------- SUPPORT CHAT THREADS (Admin) ---------- */
+.support-thread {
+  background: var(--bg-panel-light);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.support-thread h3 {
+  margin-bottom: 8px;
+  color: var(--accent-moon);
+  font-size: 1rem;
+}
+#supportChatSection .chat-messages {
+  min-height: 40px;
+}
+
+/* ---------- LOCKED NIGHT ACTION STATE ---------- */
+#nightActionPlayer p strong,
+#hunterPullPlayer p strong {
+  color: var(--accent-moon);
+}
+
+/* ---------- WOLF TEAM INFO ---------- */
+#wolfTeamSection .player-chip {
+  font-weight: 700;
+}
+
+/* ---------- MY VOTE COUNT BANNER ---------- */
+.vote-count-banner {
+  text-align: center;
+  padding: 10px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 12px;
+  background: var(--bg-panel-light);
+  border: 1px solid var(--border-color);
+  color: var(--text-light);
+}
+.vote-count-banner.has-votes {
+  background: rgba(192, 57, 43, 0.18);
+  border-color: var(--accent-blood);
+  color: #ff8f80;
+  animation: pulse 1.8s infinite;
+}
+
+/* ============================================================
+   ADDITIONS — UI PHASE 1 (nâng cấp giao diện/UX, không đổi logic)
+   ============================================================
+   1. Background system (night/day theme + overlay tối)
+   2. Animation nhẹ dùng chung (fade/slide)
+   3. Asset placeholder graceful-fallback (logo, role icon, avatar)
+   ============================================================ */
+
+/* ---------- 1. BACKGROUND SYSTEM ----------
+   .bg-layer: ảnh nền theo theme, đặt fixed phía sau toàn bộ nội dung.
+   .bg-overlay: lớp phủ tối để chữ luôn dễ đọc dù ảnh nền sáng/tối thế nào.
+   body.night / body.day: 2 class đã "chuẩn bị sẵn" — admin.js/player.js
+   chỉ cần toggle 1 trong 2 class này theo phase hiện tại (đã làm sẵn).
+   Chưa có ảnh trong assets/backgrounds/ → tự dùng gradient thay thế,
+   không lỗi, không khoảng trống. */
+.bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: opacity 0.8s var(--ease-soft);
+}
+.bg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  transition: background 0.8s var(--ease-soft);
+}
+body.night .bg-layer {
+  background-image:
+    radial-gradient(circle at 78% 10%, rgba(241,196,15,0.16), transparent 30%),
+    linear-gradient(180deg, #0d1330 0%, #161b3a 45%, #0b0e1c 100%),
+    url('assets/backgrounds/night.jpg');
+}
+body.day .bg-layer {
+  background-image:
+    radial-gradient(circle at 75% 12%, rgba(255,200,120,0.28), transparent 36%),
+    linear-gradient(180deg, #2c3e6e 0%, #6b4a2e 55%, #2c1c10 100%),
+    url('assets/backgrounds/day.jpg');
+}
+body.night .bg-overlay { background: var(--night-scrim); }
+body.day .bg-overlay { background: var(--day-scrim); }
+/* Mặc định trước khi JS gắn class (vd: đang load) — dùng theme night cho an toàn */
+body:not(.night):not(.day) .bg-layer {
+  background-image: linear-gradient(180deg, #0d1330 0%, #161b3a 45%, #0b0e1c 100%);
+}
+body:not(.night):not(.day) .bg-overlay { background: var(--night-scrim); }
+
+/* ---------- 2. ANIMATION DÙNG CHUNG ---------- */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes panelFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes rowSlideIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes emblemGlow {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(241,196,15,0.10), 0 0 36px var(--glow-moon), var(--shadow-deep); }
+  50% { box-shadow: 0 0 0 8px rgba(241,196,15,0.16), 0 0 52px var(--glow-moon), var(--shadow-deep); }
+}
+
+/* Tắt animation cho người dùng yêu cầu giảm hiệu ứng chuyển động */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---------- 3. ASSET PLACEHOLDER FALLBACK ---------- */
+/* Khi <img> role-icon/logo lỗi (chưa có file), JS đã gắn onerror để ẩn/thay
+   thế — các rule dưới đây chỉ đảm bảo trạng thái fallback luôn vừa khít,
+   không vỡ layout trong lúc chờ ảnh tải hoặc khi ảnh không tồn tại. */
+img.role-icon, img.phase-icon, img.avatar-img, img.logo-img {
+  max-width: 100%;
+}
