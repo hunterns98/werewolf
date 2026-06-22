@@ -564,3 +564,65 @@ export function groupSecretLog(secretLog) {
   });
   return order.map((k) => groups[k]);
 }
+
+// ============================================================
+// UI ASSETS (v UI-Phase-1) — CHỈ DATA HIỂN THỊ, KHÔNG PHẢI LOGIC GAME.
+// ============================================================
+// Đường dẫn icon từng role, dùng chung cho admin.js & player.js để không
+// bị lệch tên file giữa 2 nơi. Đặt ở đây vì cùng triết lý với ROLE_LABEL_VI:
+// 1 nguồn duy nhất, không phụ thuộc DOM/Firebase.
+// Nếu file ảnh chưa tồn tại trong assets/roles/, helper roleIconHtml() bên
+// dưới tự ẩn icon (onerror) — không hiện icon vỡ, không lỗi.
+export const ROLE_ICON_PATH = {
+  werewolf: "assets/roles/werewolf.png",
+  seer: "assets/roles/seer.png",
+  witch: "assets/roles/witch.png",
+  guardian: "assets/roles/guardian.png",
+  cupid: "assets/roles/cupid.png",
+  villager: "assets/roles/villager.png",
+  hunter: "assets/roles/hunter.png",
+  elder: "assets/roles/elder.png",
+  flute_player: "assets/roles/flute_player.png",
+  thief: "assets/roles/thief.png",
+  traitor: "assets/roles/traitor.png",
+  cursed_wolf: "assets/roles/cursed_wolf.png",
+  wild_child: "assets/roles/wild_child.png",
+};
+
+// Icon phase — emoji luôn hiển thị mặc định (không phụ thuộc ảnh); nếu sau
+// này có file ảnh trong assets/ui/, icon ảnh sẽ tự hiện THÊM cạnh emoji.
+export const PHASE_ICON_PATH = {
+  lobby: "assets/ui/icon-lobby.png",
+  night: "assets/ui/icon-night.png",
+  day: "assets/ui/icon-day.png",
+  ended: "assets/ui/icon-ended.png",
+};
+
+// Trả về chuỗi HTML <img> cho icon 1 role, tự ẩn nếu ảnh chưa tồn tại
+// (onerror). alt="" vì icon chỉ trang trí, tên role đã có chữ riêng cạnh nó.
+export function roleIconHtml(role, sizePx = 22) {
+  const path = ROLE_ICON_PATH[role];
+  if (!path) return "";
+  return `<img src="${path}" class="role-icon" style="width:${sizePx}px;height:${sizePx}px" onerror="this.style.display='none'" alt="" />`;
+}
+
+// Trả về chuỗi HTML <img> icon phase (đặt cạnh emoji có sẵn, không thay
+// emoji) — tự ẩn nếu ảnh chưa tồn tại.
+export function phaseIconHtml(phase, sizePx = 28) {
+  const path = PHASE_ICON_PATH[phase];
+  if (!path) return "";
+  return `<img src="${path}" class="phase-icon" style="width:${sizePx}px;height:${sizePx}px" onerror="this.style.display='none'" alt="" />`;
+}
+
+// Avatar tròn theo chữ cái đầu tên — không cần ảnh per-player (chưa có cơ
+// chế upload avatar riêng từng người), nhưng vẫn nhận 1 ảnh avatar mặc định
+// chung (assets/ui/default-avatar.png) nếu bạn muốn dùng ảnh thay chữ cái.
+export function avatarHtml(name, sizePx = 36) {
+  const initial = (name || "?").trim().charAt(0).toUpperCase() || "?";
+  return `
+    <span class="avatar-circle" style="width:${sizePx}px;height:${sizePx}px;line-height:${sizePx}px;font-size:${Math.round(sizePx * 0.45)}px">
+      <img src="assets/ui/default-avatar.png" class="avatar-img" onerror="this.remove()" alt="" />
+      <span class="avatar-initial">${initial}</span>
+    </span>
+  `;
+}

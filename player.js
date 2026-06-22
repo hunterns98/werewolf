@@ -25,7 +25,7 @@
 import { db, doc, setDoc, getDoc, updateDoc, onSnapshot } from "./firebase.js";
 import {
   ROLE_LABEL_VI, ROLE_TEAM, ROLE_TEAM_LABEL_VI, getAlivePlayers, WIN_LABEL_VI,
-  groupSecretLog, formatSecretEntry,
+  groupSecretLog, formatSecretEntry, roleIconHtml, phaseIconHtml, avatarHtml,
 } from "./game.js";
 
 let roomCode = null;
@@ -571,7 +571,7 @@ function renderRoleCard(me, isAlive) {
   }
   const partner = me.isLover && me.loverPartnerId ? currentRoom.players[me.loverPartnerId] : null;
   card.innerHTML = `
-    <div class="role-name">${ROLE_LABEL_VI[me.role] || me.role}</div>
+    <div class="role-name">${roleIconHtml(me.role, 32)}${ROLE_LABEL_VI[me.role] || me.role}</div>
     ${me.isLover ? `<div class="lover-badge">💞 Cặp đôi với ${partner ? partner.name : "?"}</div>` : ""}
     <div class="role-desc">${getRoleDescription(me.role)}</div>
   `;
@@ -600,13 +600,17 @@ function renderPhaseInfo() {
   const el = $("#phaseInfoPlayer");
   const { phase, round } = currentRoom;
   const labels = {
-    lobby: "🛋️ Đang chờ trong phòng chờ...",
-    night: `🌙 ĐÊM ${round} — Mọi người im lặng...`,
-    day: `☀️ NGÀY ${round} — Thảo luận và bỏ phiếu!`,
-    ended: "🏁 GAME ĐÃ KẾT THÚC",
+    lobby: { title: "🛋️ Đang chờ trong phòng chờ...", sub: "Chuẩn bị màn đêm sắp tới" },
+    night: { title: `🌙 ĐÊM ${round}`, sub: "Mọi người im lặng, Sói đang săn mồi..." },
+    day: { title: `☀️ NGÀY ${round}`, sub: "Thảo luận và bỏ phiếu!" },
+    ended: { title: "🏁 GAME ĐÃ KẾT THÚC", sub: "Cùng xem lại toàn bộ trận đấu" },
   };
-  el.textContent = labels[phase] || "";
+  const cur = labels[phase] || { title: "", sub: "" };
+  el.innerHTML = `${phaseIconHtml(phase)}${cur.title}<span class="phase-sub">${cur.sub}</span>`;
   el.className = `phase-info phase-${phase}`;
+  // UI Phase 1: theme nền night/day theo phase hiện tại (chỉ đổi giao diện)
+  document.body.classList.toggle("night", phase === "night");
+  document.body.classList.toggle("day", phase !== "night");
 }
 
 function renderAliveList() {
@@ -622,7 +626,7 @@ function renderAliveList() {
     html += `<span class="player-chip alive">🟢 ${p.name}</span>`;
   });
   dead.forEach(([, p]) => {
-    html += `<span class="player-chip dead">🔴 ${p.name}</span>`;
+    html += `<span class="player-chip dead">💀 ${p.name}</span>`;
   });
   html += `</div>`;
   el.innerHTML = html;
@@ -813,7 +817,7 @@ function renderLoverInfo(me, isAlive) {
     <div class="lover-card">
       <div>❤️ Bạn là cặp đôi với: <strong>${partner.name}</strong></div>
       <div>${partnerAlive ? "🟢 Còn sống" : "💔 Đã mất"}</div>
-      <div class="lover-role-info">🎭 Chức năng hiện tại của ${partner.name}: <strong>${ROLE_LABEL_VI[partner.role] || "?"}</strong></div>
+      <div class="lover-role-info">🎭 Chức năng hiện tại của ${partner.name}: <strong>${roleIconHtml(partner.role, 18)}${ROLE_LABEL_VI[partner.role] || "?"}</strong></div>
       ${!partnerAlive ? `<div class="lover-death-notice">💔 Người yêu của bạn đã mất... Bạn cũng sẽ ra đi theo.</div>` : ""}
     </div>
   `;
@@ -928,9 +932,9 @@ function renderEndGameReveal() {
     const changed = p.originalRole && p.originalRole !== p.role;
     const team = ROLE_TEAM[p.role];
     html += `<div class="player-row ${p.alive === false ? "dead" : ""}">
-      <span>${p.alive === false ? "💀" : "🟢"} ${p.name}</span>
+      <span class="player-name">${avatarHtml(p.name, 30)} ${p.alive === false ? "💀" : "🟢"} ${p.name}</span>
       <span class="player-role">
-        Ban đầu: ${ROLE_LABEL_VI[p.originalRole] || ROLE_LABEL_VI[p.role] || "?"}${changed ? ` → Hiện tại: ${ROLE_LABEL_VI[p.role] || p.role}` : ""}
+        ${roleIconHtml(p.originalRole || p.role, 18)}Ban đầu: ${ROLE_LABEL_VI[p.originalRole] || ROLE_LABEL_VI[p.role] || "?"}${changed ? ` → Hiện tại: ${roleIconHtml(p.role, 18)}${ROLE_LABEL_VI[p.role] || p.role}` : ""}
         · ${ROLE_TEAM_LABEL_VI[team] || ""}
       </span>
     </div>`;

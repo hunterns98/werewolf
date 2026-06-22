@@ -7,11 +7,21 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- BACKGROUND SYSTEM — đổi ảnh bằng cách thêm file vào assets/backgrounds/
+       (night.jpg / day.jpg). Chưa có ảnh thì tự dùng gradient thay thế. -->
+  <div class="bg-layer"></div>
+  <div class="bg-overlay"></div>
+
   <div class="container">
 
     <!-- ========== JOIN SCREEN ========== -->
     <div id="joinScreenPlayer" class="join-card">
-      <h1>🐺 Ma Sói</h1>
+      <div class="logo-emblem">
+        <img src="assets/logo/logo.png" class="logo-img" alt="Ma Sói"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+        <div class="logo-fallback">🐺</div>
+      </div>
+      <h1>MA SÓI</h1>
       <p class="subtitle">Nhập mã phòng và tên của bạn để vào game</p>
       <input type="text" id="inputRoomCodePlayer" placeholder="Mã phòng (VD: AB12)" />
       <input type="text" id="inputPlayerName" placeholder="Tên của bạn" />

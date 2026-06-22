@@ -29,6 +29,7 @@ import {
   makeLogEntry, getRolePreset, buildRoleList,
   applyWildChildAdopt, checkWildChildTransform, isValidGuardianTarget,
   makeSecretEntry, groupSecretLog, formatSecretEntry, resolveWolfVote,
+  roleIconHtml, phaseIconHtml, avatarHtml,
 } from "./game.js";
 let roomCode = null;
 let roomRefDoc = null;
@@ -850,13 +851,17 @@ function renderPhaseBanner() {
   const { phase, round } = currentRoom;
   const count = Object.keys(currentRoom.players || {}).length;
   const labels = {
-    lobby: `🛋️ Phòng chờ (${count}/${currentRoom.settings?.playerCount || "?"} người)`,
-    night: `🌙 ĐÊM ${round}`,
-    day: `☀️ NGÀY ${round}`,
-    ended: `🏁 KẾT THÚC`,
+    lobby: { title: `🛋️ Phòng chờ (${count}/${currentRoom.settings?.playerCount || "?"} người)`, sub: "Đang chờ mọi người vào làng..." },
+    night: { title: `🌙 ĐÊM ${round}`, sub: "Sói đang săn mồi trong bóng tối..." },
+    day: { title: `☀️ NGÀY ${round}`, sub: "Một ngày mới — thảo luận và bỏ phiếu!" },
+    ended: { title: `🏁 KẾT THÚC`, sub: "Trận đấu đã ngã ngũ." },
   };
-  banner.textContent = labels[phase] || "";
+  const cur = labels[phase] || { title: "", sub: "" };
+  banner.innerHTML = `${phaseIconHtml(phase)}${cur.title}<span class="phase-sub">${cur.sub}</span>`;
   banner.className = `phase-banner phase-${phase}`;
+  // UI Phase 1: theme nền night/day theo phase hiện tại (chỉ đổi giao diện)
+  document.body.classList.toggle("night", phase === "night");
+  document.body.classList.toggle("day", phase !== "night");
 }
 function renderPlayerList() {
   const container = $("#playerListAdmin");
@@ -869,12 +874,18 @@ function renderPlayerList() {
   Object.entries(players).forEach(([id, p]) => {
     const div = document.createElement("div");
     div.className = `player-row ${p.alive === false ? "dead" : ""}`;
-    const roleText = p.role ? `(${ROLE_LABEL_VI[p.role]})` : "";
+    const roleText = p.role ? `${roleIconHtml(p.role, 18)}${ROLE_LABEL_VI[p.role]}` : "";
     const voteText = currentRoom.phase === "day" && voteTally[id] ? `🗳️ ${voteTally[id]}` : "";
     const loverName = p.loverPartnerId && players[p.loverPartnerId] ? `💞${players[p.loverPartnerId].name}(${ROLE_LABEL_VI[players[p.loverPartnerId].role] || "?"})` : "";
+    // Lobby chưa chia vai trò → hiện trạng thái "Đang chờ" thân thiện kiểu Ngôi Làng
+    const statusOrRole = p.role
+      ? `<span class="player-role">${roleText} ${voteText}</span>`
+      : currentRoom.phase === "lobby"
+        ? `<span class="player-status-waiting">🟢 Đang chờ</span>`
+        : `<span class="player-role">${voteText}</span>`;
     div.innerHTML = `
-      <span class="player-name">${p.alive === false ? "💀" : "🟢"} ${p.name} ${loverName}</span>
-      <span class="player-role">${roleText} ${voteText}</span>
+      <span class="player-name">${avatarHtml(p.name, 32)} ${p.alive === false ? "💀" : "🟢"} ${p.name} ${loverName}</span>
+      ${statusOrRole}
       ${currentRoom.phase === "lobby" ? `<button class="btn-kick" data-id="${id}">Xóa</button>` : ""}
     `;
     container.appendChild(div);
@@ -1648,9 +1659,9 @@ function renderWinScreen() {
       const changed = p.originalRole && p.originalRole !== p.role;
       const team = ROLE_TEAM[p.role];
       return `<div class="player-row ${p.alive ? "" : "dead"}">
-        <span>${p.alive === false ? "💀" : "🟢"} ${p.name}</span>
+        <span class="player-name">${avatarHtml(p.name, 30)} ${p.alive === false ? "💀" : "🟢"} ${p.name}</span>
         <span class="player-role">
-          Ban đầu: ${ROLE_LABEL_VI[p.originalRole] || ROLE_LABEL_VI[p.role] || "?"}${changed ? ` → Hiện tại: ${ROLE_LABEL_VI[p.role] || p.role}` : ""}
+          ${roleIconHtml(p.originalRole || p.role, 18)}Ban đầu: ${ROLE_LABEL_VI[p.originalRole] || ROLE_LABEL_VI[p.role] || "?"}${changed ? ` → Hiện tại: ${roleIconHtml(p.role, 18)}${ROLE_LABEL_VI[p.role] || p.role}` : ""}
           · ${ROLE_TEAM_LABEL_VI[team] || ""}
         </span>
       </div>`;
