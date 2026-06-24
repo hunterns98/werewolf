@@ -149,3 +149,17 @@ npx serve .
 - Text-to-speech đọc lời dẫn truyện
 - QR code để join phòng nhanh hơn
 - Điều kiện thắng riêng cho Phản Bội (Traitor) — hiện vai trò này tồn tại nhưng chưa có win condition riêng
+
+## 🎬 UI Phase 2 — Game Show Experience (chỉ UI/UX/animation/audio, không đổi gameplay)
+
+**2 bug đã sửa:**
+- Background bị "kẹt" cả 2 theme `day night` cùng lúc trên `<body>` → giờ luôn `classList.remove("night","day")` trước rồi mới `add` đúng 1 class.
+- Icon bị lặp đôi ở Phase Banner (vd "🌙 🌙 ĐÊM 1") do emoji cũ còn nằm trong text trong khi đã thêm ảnh icon mới → đã bỏ toàn bộ emoji nhúng sẵn trong text (phase banner **và** màn thắng/thua, vì cùng lỗi), icon giờ hiển thị qua đúng 1 nguồn duy nhất (`roleIconHtml`/`phaseIconHtml`/`winIconHtml` — ảnh nếu có, tự fallback emoji nếu chưa có ảnh, không bao giờ hiện cả 2).
+
+**Tính năng mới:**
+- **Reveal Role Cinematic**: màn hình "Bạn là... [icon lớn] TÊN VAI TRÒ" chiếu đúng 1 lần khi vai trò vừa được chia mỗi trận.
+- **Phase Transition**: hiệu ứng "🌙 ĐÊM XUỐNG / ☀️ BÌNH MINH" mỗi khi phase thực sự đổi (không chiếu khi vừa load trang).
+- **Victory screen**: icon lớn theo phe thắng + animation pop-in, ở cả màn Admin và Player.
+- **Hiệu ứng khi có người chết**: "đóng dấu" skull + chuyển dần sang xám, chỉ chạy đúng 1 lần cho người VỪA chết (không lặp lại ở các lần render sau).
+- **Animation vote**: nút vote đang chọn có pulse/glow rõ hơn, số phiếu "nảy" nhẹ khi cập nhật.
+- **Audio**: `assets/audio/{night,day,vote,death,victory}.mp3` — phát ở cả Admin & Player khi đúng sự kiện (chuyển phase, vote xong, có người chết, kết thúc game); không autoplay khi load trang; tự bỏ qua êm nếu thiếu file hoặc bị điện thoại chặn.

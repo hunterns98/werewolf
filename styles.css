@@ -321,19 +321,22 @@ button {
   z-index: 0;
 }
 
-/* Role icon nhỏ cạnh tên role — tự ẩn (onerror) nếu chưa có file ảnh */
-.role-icon {
-  display: inline-block;
+/* Icon wrap dùng chung (role/phase/win) — ảnh ưu tiên, lỗi/chưa có thì tự
+   hiện emoji fallback bên trong cùng span này (xem game.js: iconWithFallback).
+   Luôn chỉ hiện ĐÚNG 1 icon, không bao giờ lặp đôi ảnh+emoji. */
+.icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   vertical-align: middle;
-  object-fit: contain;
-}
-
-/* Phase icon — đặt cạnh emoji có sẵn, không thay thế emoji */
-.phase-icon {
-  display: inline-block;
-  vertical-align: middle;
-  object-fit: contain;
   margin-right: 4px;
+}
+.icon-fallback {
+  line-height: 1;
+}
+.role-icon, .phase-icon, .win-icon {
+  display: inline-block;
+  object-fit: contain;
 }
 
 /* ---------- SELECT OPTIONS (chọn người trong night action / vote) ---------- */
@@ -962,6 +965,163 @@ body:not(.night):not(.day) .bg-overlay { background: var(--night-scrim); }
 /* Khi <img> role-icon/logo lỗi (chưa có file), JS đã gắn onerror để ẩn/thay
    thế — các rule dưới đây chỉ đảm bảo trạng thái fallback luôn vừa khít,
    không vỡ layout trong lúc chờ ảnh tải hoặc khi ảnh không tồn tại. */
-img.role-icon, img.phase-icon, img.avatar-img, img.logo-img {
+img.role-icon, img.phase-icon, img.avatar-img, img.logo-img, img.win-icon {
   max-width: 100%;
 }
+
+/* ============================================================
+   ADDITIONS — UI PHASE 2 (Game Show Experience)
+   ============================================================
+   1. Reveal Role Cinematic
+   2. Phase Transition (Đêm xuống / Bình minh)
+   3. Victory screen (icon lớn)
+   4. Animation vote + hiệu ứng khi có người chết
+   ============================================================ */
+
+/* ---------- 1. REVEAL ROLE CINEMATIC ---------- */
+.reveal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 40%, rgba(40,30,70,0.97), rgba(6,7,14,0.99));
+  text-align: center;
+  padding: 24px;
+}
+.reveal-overlay.show {
+  display: flex;
+  animation: fadeIn 0.4s ease;
+}
+.reveal-content {
+  animation: revealScaleIn 0.6s var(--ease-soft) both;
+}
+.reveal-label {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+  animation: fadeInUp 0.5s var(--ease-soft) both;
+}
+.reveal-icon {
+  margin-bottom: 18px;
+  filter: drop-shadow(0 0 28px var(--glow-moon));
+  animation: revealIconPop 0.7s var(--ease-soft) 0.15s both;
+}
+.reveal-icon .icon-wrap, .reveal-icon img, .reveal-icon .icon-fallback {
+  width: 88px;
+  height: 88px;
+  font-size: 70px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.reveal-role-name {
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  letter-spacing: 3px;
+  color: var(--accent-moon);
+  text-shadow: 0 0 24px var(--glow-moon), 0 2px 6px rgba(0,0,0,0.6);
+  animation: fadeInUp 0.5s var(--ease-soft) 0.3s both;
+}
+@keyframes revealScaleIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes revealIconPop {
+  0% { opacity: 0; transform: scale(0.4); }
+  70% { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* ---------- 2. PHASE TRANSITION ---------- */
+.phase-transition-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 998;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+  padding: 24px;
+}
+.phase-transition-overlay.show {
+  display: flex;
+  animation: fadeIn 0.35s ease;
+}
+.phase-transition-overlay.show.night {
+  background: radial-gradient(circle at 50% 35%, rgba(20,24,58,0.92), rgba(6,7,16,0.97));
+}
+.phase-transition-overlay.show.day {
+  background: radial-gradient(circle at 50% 30%, rgba(120,70,20,0.85), rgba(30,18,8,0.95));
+}
+.phase-transition-content {
+  animation: fadeInUp 0.5s var(--ease-soft) both;
+}
+.phase-transition-content .phase-transition-icon {
+  margin-bottom: 12px;
+  filter: drop-shadow(0 0 24px var(--glow-moon));
+}
+.phase-transition-content .phase-transition-icon .icon-fallback {
+  font-size: 56px;
+}
+.phase-transition-content h1 {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  letter-spacing: 2px;
+  color: var(--accent-moon);
+  text-shadow: 0 0 20px var(--glow-moon);
+  margin-bottom: 6px;
+}
+.phase-transition-content p {
+  color: var(--text-light);
+  font-size: 1rem;
+  opacity: 0.9;
+}
+
+/* ---------- 3. VICTORY SCREEN ---------- */
+.victory-icon {
+  margin-bottom: 10px;
+  filter: drop-shadow(0 0 30px rgba(255,255,255,0.35));
+  animation: revealIconPop 0.7s var(--ease-soft) both;
+}
+.victory-icon .icon-fallback {
+  font-size: 60px;
+}
+
+/* ---------- 4. VOTE ANIMATION + DEATH EFFECT ---------- */
+/* Player card được chọn (vote) — nhấn mạnh hơn .select-option.active gốc */
+.vote-btn.active {
+  animation: voteSelectPulse 0.5s var(--ease-soft);
+  box-shadow: 0 0 0 3px rgba(241,196,15,0.35), 0 0 18px var(--glow-moon);
+}
+@keyframes voteSelectPulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1.0); }
+}
+/* Số phiếu — "nảy" nhẹ mỗi khi khu vực vote được vẽ lại (vote thay đổi) */
+.vote-count, .vote-row {
+  animation: countPop 0.35s var(--ease-soft);
+}
+@keyframes countPop {
+  from { transform: scale(0.92); opacity: 0.6; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* Hiệu ứng khi 1 player VỪA chết (so với lần render trước) — skull "đóng
+   dấu" kèm chuyển dần sang xám, không lặp lại ở các lần render sau vì
+   class .just-died chỉ được gắn đúng 1 lần (xem admin.js/player.js). */
+.player-row.just-died, .player-chip.just-died {
+  animation: deathStamp 0.7s var(--ease-soft);
+}
+@keyframes deathStamp {
+  0% { transform: scale(1); filter: grayscale(0); }
+  30% { transform: scale(1.08) rotate(-2deg); filter: grayscale(0.2); }
+  60% { transform: scale(0.97) rotate(1deg); filter: grayscale(0.6); }
+  100% { transform: scale(1) rotate(0); filter: grayscale(0.55); }
+}
+

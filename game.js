@@ -497,10 +497,10 @@ export const DEATH_CAUSE_LABEL_VI = {
 };
 
 export const WIN_LABEL_VI = {
-  werewolf: "🐺 MA SÓI THẮNG!",
-  village: "🏡 DÂN LÀNG THẮNG!",
-  lovers: "💞 CẶP ĐÔI THẮNG!",
-  flute_player: "🎶 THỔI SÁO THẮNG!",
+  werewolf: "MA SÓI THẮNG!",
+  village: "DÂN LÀNG THẮNG!",
+  lovers: "CẶP ĐÔI THẮNG!",
+  flute_player: "THỔI SÁO THẮNG!",
 };
 
 export const ROLE_TEAM_LABEL_VI = {
@@ -566,13 +566,11 @@ export function groupSecretLog(secretLog) {
 }
 
 // ============================================================
-// UI ASSETS (v UI-Phase-1) — CHỈ DATA HIỂN THỊ, KHÔNG PHẢI LOGIC GAME.
+// UI ASSETS (v UI-Phase-1/2) — CHỈ DATA HIỂN THỊ, KHÔNG PHẢI LOGIC GAME.
 // ============================================================
 // Đường dẫn icon từng role, dùng chung cho admin.js & player.js để không
 // bị lệch tên file giữa 2 nơi. Đặt ở đây vì cùng triết lý với ROLE_LABEL_VI:
 // 1 nguồn duy nhất, không phụ thuộc DOM/Firebase.
-// Nếu file ảnh chưa tồn tại trong assets/roles/, helper roleIconHtml() bên
-// dưới tự ẩn icon (onerror) — không hiện icon vỡ, không lỗi.
 export const ROLE_ICON_PATH = {
   werewolf: "assets/roles/werewolf.png",
   seer: "assets/roles/seer.png",
@@ -589,29 +587,83 @@ export const ROLE_ICON_PATH = {
   wild_child: "assets/roles/wild_child.png",
 };
 
-// Icon phase — emoji luôn hiển thị mặc định (không phụ thuộc ảnh); nếu sau
-// này có file ảnh trong assets/ui/, icon ảnh sẽ tự hiện THÊM cạnh emoji.
+// Emoji thay thế khi CHƯA có ảnh role tương ứng — dùng làm fallback DUY NHẤT
+// (không hiển thị cùng lúc với ảnh, tránh lặp icon).
+export const ROLE_EMOJI_FALLBACK = {
+  werewolf: "🐺",
+  seer: "🔮",
+  witch: "🧪",
+  guardian: "🛡️",
+  cupid: "💘",
+  villager: "👤",
+  hunter: "🏹",
+  elder: "👴",
+  flute_player: "🎶",
+  thief: "🃏",
+  traitor: "🕵️",
+  cursed_wolf: "🌀",
+  wild_child: "👩",
+};
+
 export const PHASE_ICON_PATH = {
   lobby: "assets/ui/icon-lobby.png",
   night: "assets/ui/icon-night.png",
   day: "assets/ui/icon-day.png",
   ended: "assets/ui/icon-ended.png",
 };
+export const PHASE_EMOJI_FALLBACK = {
+  lobby: "🛋️",
+  night: "🌙",
+  day: "☀️",
+  ended: "🏁",
+};
 
-// Trả về chuỗi HTML <img> cho icon 1 role, tự ẩn nếu ảnh chưa tồn tại
-// (onerror). alt="" vì icon chỉ trang trí, tên role đã có chữ riêng cạnh nó.
-export function roleIconHtml(role, sizePx = 22) {
-  const path = ROLE_ICON_PATH[role];
-  if (!path) return "";
-  return `<img src="${path}" class="role-icon" style="width:${sizePx}px;height:${sizePx}px" onerror="this.style.display='none'" alt="" />`;
+export const WIN_ICON_PATH = {
+  werewolf: "assets/ui/victory-werewolf.png",
+  village: "assets/ui/victory-village.png",
+  lovers: "assets/ui/victory-lovers.png",
+  flute_player: "assets/ui/victory-flute.png",
+};
+export const WIN_EMOJI_FALLBACK = {
+  werewolf: "🐺",
+  village: "🏠",
+  lovers: "💞",
+  flute_player: "🎶",
+};
+
+// Helper nội bộ: HTML 1 icon "ảnh ưu tiên, lỗi/chưa có thì tự thay bằng
+// emoji fallback" — emoji KHÔNG hiển thị cùng lúc với ảnh, nên không bao
+// giờ bị lặp icon (đây chính là bug đã sửa ở UI Phase 2).
+function iconWithFallback(path, emoji, sizePx, cssClass) {
+  if (!path) return emoji || "";
+  const fallbackSpan = emoji
+    ? `<span class="icon-fallback" style="font-size:${Math.round(sizePx * 0.85)}px; display:none;">${emoji}</span>`
+    : "";
+  return `<span class="icon-wrap">` +
+    `<img src="${path}" class="${cssClass}" style="width:${sizePx}px;height:${sizePx}px" alt=""` +
+    ` onerror="this.style.display='none'; this.nextElementSibling && (this.nextElementSibling.style.display='inline');" />` +
+    fallbackSpan +
+    `</span>`;
 }
 
-// Trả về chuỗi HTML <img> icon phase (đặt cạnh emoji có sẵn, không thay
-// emoji) — tự ẩn nếu ảnh chưa tồn tại.
+// Icon 1 role — ảnh assets/roles/<role>.png, lỗi/chưa có thì tự dùng emoji
+// tương ứng. alt="" vì icon chỉ trang trí, tên role đã có chữ riêng cạnh nó.
+export function roleIconHtml(role, sizePx = 22) {
+  return iconWithFallback(ROLE_ICON_PATH[role], ROLE_EMOJI_FALLBACK[role], sizePx, "role-icon");
+}
+
+// Icon phase — ảnh assets/ui/icon-<phase>.png, lỗi/chưa có thì tự dùng
+// emoji tương ứng. KHÔNG còn nhúng thêm emoji trong text phase ở nơi khác
+// để tránh lặp icon (vd: "🌙 🌙 ĐÊM 1").
 export function phaseIconHtml(phase, sizePx = 28) {
-  const path = PHASE_ICON_PATH[phase];
-  if (!path) return "";
-  return `<img src="${path}" class="phase-icon" style="width:${sizePx}px;height:${sizePx}px" onerror="this.style.display='none'" alt="" />`;
+  return iconWithFallback(PHASE_ICON_PATH[phase], PHASE_EMOJI_FALLBACK[phase], sizePx, "phase-icon");
+}
+
+// Icon lớn cho màn thắng/thua — ảnh assets/ui/victory-<winner>.png, lỗi/
+// chưa có thì tự dùng emoji tương ứng. WIN_LABEL_VI không còn nhúng emoji
+// riêng (xem định nghĩa phía trên) để icon này là nguồn icon DUY NHẤT.
+export function winIconHtml(winner, sizePx = 64) {
+  return iconWithFallback(WIN_ICON_PATH[winner], WIN_EMOJI_FALLBACK[winner], sizePx, "win-icon");
 }
 
 // Avatar tròn theo chữ cái đầu tên — không cần ảnh per-player (chưa có cơ

@@ -22,10 +22,24 @@
 //    do bí mật khác (sói cắn/độc/cupid) vẫn ẩn như cũ.
 // ============================================================
 
+// v UI-Phase-2 (chỉ UI/UX/animation/audio — KHÔNG đổi gameplay):
+//  - Sửa bug: cả 2 class "night"/"day" cùng tồn tại trên <body> → giờ
+//    luôn remove cả 2 trước rồi add đúng 1.
+//  - Sửa bug: icon lặp đôi ở phase banner (emoji cũ còn nằm trong text
+//    trong khi đã thêm ảnh icon mới) → bỏ emoji khỏi text, icon hiển thị
+//    DUY NHẤT qua roleIconHtml/phaseIconHtml/winIconHtml (ảnh, tự fallback
+//    emoji nếu chưa có ảnh — không bao giờ hiện cả 2 cùng lúc).
+//  - Reveal Role Cinematic khi vai trò được chia (1 lần/trận).
+//  - PhaseTransition: màn chuyển cảnh khi Đêm xuống / Bình minh.
+//  - Victory screen: icon lớn + animation.
+//  - Hiệu ứng khi có người vừa chết (đổi từ còn sống ở lần render trước).
+//  - Audio: night/day/vote/death/victory — không autoplay, tự bỏ qua lỗi.
+// ============================================================
+
 import { db, doc, setDoc, getDoc, updateDoc, onSnapshot } from "./firebase.js";
 import {
   ROLE_LABEL_VI, ROLE_TEAM, ROLE_TEAM_LABEL_VI, getAlivePlayers, WIN_LABEL_VI,
-  groupSecretLog, formatSecretEntry, roleIconHtml, phaseIconHtml, avatarHtml,
+  groupSecretLog, formatSecretEntry, roleIconHtml, phaseIconHtml, avatarHtml, winIconHtml,
 } from "./game.js";
 
 let roomCode = null;
@@ -34,6 +48,11 @@ let myName = null;
 let roomRefDoc = null;
 let currentRoom = null;
 let unsubscribe = null;
+// UI Phase 2 — chỉ phục vụ hiệu ứng/âm thanh, KHÔNG phải state game:
+let lastPhaseForTransition = null; // phase lần render trước, để phát hiện CHUYỂN phase
+let roleRevealShown = false;       // đã chiếu màn "Bạn là..." cho trận này chưa
+let previousAlivePlayerIds = new Set(); // ai còn sống ở lần render trước (phát hiện vừa chết)
+let victorySoundPlayed = false; // chỉ phát victory.mp3 đúng 1 lần khi game vừa kết thúc
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -524,6 +543,90 @@ function renderHunterPullPlayer() {
 }
 
 // ============================================================
+// 3c. AUDIO (UI Phase 2) — không autoplay ngoài ý người dùng, tự bỏ qua
+// nếu thiếu file hoặc bị mobile chặn. Mirror đúng cơ chế đã có ở admin.js
+// để 2 phía nhất quán, không chia sẻ qua game.js (game.js không đụng API
+// trình duyệt như Audio()).
+// ============================================================
+const SOUNDS = {
+  night: "assets/audio/night.mp3",
+  day: "assets/audio/day.mp3",
+  death: "assets/audio/death.mp3",
+  victory: "assets/audio/victory.mp3",
+};
+function playSound(key) {
+  try {
+    const audio = new Audio(SOUNDS[key]);
+    audio.volume = 0.6;
+    audio.play().catch(() => {}); // thiếu file hoặc bị chặn autoplay → bỏ qua êm, không lỗi
+  } catch (e) {}
+}
+
+// ============================================================
+// 3d. PHASE TRANSITION (UI Phase 2) — màn chuyển cảnh "Đêm xuống" /
+// "Bình minh" khi phase thực sự ĐỔI (không chiếu ở lần load đầu tiên).
+// ============================================================
+function handlePhaseTransition(phase) {
+  if (lastPhaseForTransition === null) {
+    // Lần đầu vào phòng — chỉ ghi nhận mốc, không chiếu hiệu ứng đột ngột
+    lastPhaseForTransition = phase;
+    return;
+  }
+  if (phase !== lastPhaseForTransition) {
+    if (phase === "night") {
+      showPhaseTransition("night", "ĐÊM XUỐNG", "Sói bắt đầu săn mồi...");
+      playSound("night");
+    } else if (phase === "day") {
+      showPhaseTransition("day", "BÌNH MINH", "Một ngày mới bắt đầu...");
+      playSound("day");
+    }
+    lastPhaseForTransition = phase;
+  }
+}
+function showPhaseTransition(kind, title, sub) {
+  const el = $("#phaseTransitionOverlay");
+  if (!el) return;
+  el.innerHTML = `
+    <div class="phase-transition-content">
+      <div class="phase-transition-icon">${phaseIconHtml(kind, 56)}</div>
+      <h1>${title}</h1>
+      <p>${sub}</p>
+    </div>
+  `;
+  el.className = `phase-transition-overlay show ${kind}`;
+  clearTimeout(el._hideTimer);
+  el._hideTimer = setTimeout(() => {
+    el.className = "phase-transition-overlay";
+  }, 2000);
+}
+
+// ============================================================
+// 3e. REVEAL ROLE CINEMATIC (UI Phase 2) — chiếu đúng 1 lần khi vai trò
+// vừa được chia (không chiếu lại ở các lần render sau trong cùng trận).
+// ============================================================
+function maybeShowRoleReveal(me) {
+  const el = $("#roleRevealOverlay");
+  if (!el) return;
+  if (!me.role) {
+    roleRevealShown = false; // chưa có role (lobby/đã reset) → sẵn sàng chiếu lại cho trận sau
+    return;
+  }
+  if (roleRevealShown) return;
+  roleRevealShown = true;
+  el.innerHTML = `
+    <div class="reveal-content">
+      <p class="reveal-label">Bạn là...</p>
+      <div class="reveal-icon">${roleIconHtml(me.role, 88)}</div>
+      <h1 class="reveal-role-name">${(ROLE_LABEL_VI[me.role] || me.role).toUpperCase()}</h1>
+    </div>
+  `;
+  el.classList.add("show");
+  setTimeout(() => {
+    el.classList.remove("show");
+  }, 2400);
+}
+
+// ============================================================
 // 4. RENDER
 // ============================================================
 
@@ -536,6 +639,7 @@ function renderPlayerScreen() {
 
   renderStatusBar(me, isAlive);
   renderRoleCard(me, isAlive);
+  maybeShowRoleReveal(me);
   renderPhaseInfo();
   renderAliveList();
   renderWolfTeamInfo(me, isAlive);
@@ -600,17 +704,22 @@ function renderPhaseInfo() {
   const el = $("#phaseInfoPlayer");
   const { phase, round } = currentRoom;
   const labels = {
-    lobby: { title: "🛋️ Đang chờ trong phòng chờ...", sub: "Chuẩn bị màn đêm sắp tới" },
-    night: { title: `🌙 ĐÊM ${round}`, sub: "Mọi người im lặng, Sói đang săn mồi..." },
-    day: { title: `☀️ NGÀY ${round}`, sub: "Thảo luận và bỏ phiếu!" },
-    ended: { title: "🏁 GAME ĐÃ KẾT THÚC", sub: "Cùng xem lại toàn bộ trận đấu" },
+    lobby: { title: "Đang chờ trong phòng chờ...", sub: "Chuẩn bị màn đêm sắp tới" },
+    night: { title: `ĐÊM ${round}`, sub: "Mọi người im lặng, Sói đang săn mồi..." },
+    day: { title: `NGÀY ${round}`, sub: "Thảo luận và bỏ phiếu!" },
+    ended: { title: "GAME ĐÃ KẾT THÚC", sub: "Cùng xem lại toàn bộ trận đấu" },
   };
   const cur = labels[phase] || { title: "", sub: "" };
+  // Icon hiển thị DUY NHẤT qua phaseIconHtml() (ảnh, tự fallback emoji nếu
+  // chưa có ảnh) — text không còn nhúng emoji riêng để tránh lặp icon.
   el.innerHTML = `${phaseIconHtml(phase)}${cur.title}<span class="phase-sub">${cur.sub}</span>`;
   el.className = `phase-info phase-${phase}`;
-  // UI Phase 1: theme nền night/day theo phase hiện tại (chỉ đổi giao diện)
-  document.body.classList.toggle("night", phase === "night");
-  document.body.classList.toggle("day", phase !== "night");
+  // UI Phase 1/2: theme nền night/day theo phase hiện tại (chỉ đổi giao diện).
+  // Luôn remove cả 2 trước rồi add đúng 1 — tránh bug cũ (cả 2 class cùng tồn tại).
+  document.body.classList.remove("night", "day");
+  document.body.classList.add(phase === "night" ? "night" : "day");
+  // UI Phase 2: phát hiện chuyển phase → hiệu ứng PhaseTransition + âm thanh
+  handlePhaseTransition(phase);
 }
 
 function renderAliveList() {
@@ -619,17 +728,30 @@ function renderAliveList() {
   const players = currentRoom.players || {};
   const alive = getAlivePlayers(players);
   const dead = Object.entries(players).filter(([, p]) => p.alive === false);
+  const currentAliveIds = new Set(alive.map((p) => p.id));
+
+  // UI Phase 2: phát hiện người VỪA chết so với lần render trước, để gắn
+  // class animation 1 lần (skull/fade) + phát death.mp3 đúng 1 lần.
+  let justDiedCount = 0;
+  if (previousAlivePlayerIds.size > 0) {
+    dead.forEach(([id]) => {
+      if (previousAlivePlayerIds.has(id)) justDiedCount++;
+    });
+  }
+  if (justDiedCount > 0) playSound("death");
 
   let html = `<div class="alive-counter">👥 Còn sống: ${alive.length} / ${Object.keys(players).length}</div>`;
   html += `<div class="player-list-compact">`;
   alive.forEach(p => {
     html += `<span class="player-chip alive">🟢 ${p.name}</span>`;
   });
-  dead.forEach(([, p]) => {
-    html += `<span class="player-chip dead">💀 ${p.name}</span>`;
+  dead.forEach(([id, p]) => {
+    const justDied = previousAlivePlayerIds.size > 0 && previousAlivePlayerIds.has(id);
+    html += `<span class="player-chip dead ${justDied ? "just-died" : ""}">💀 ${p.name}</span>`;
   });
   html += `</div>`;
   el.innerHTML = html;
+  previousAlivePlayerIds = currentAliveIds;
 }
 
 // "Đồng đội Sói" — chỉ hiện cho người chơi đang là Sói/Sói Nguyền còn sống.
@@ -773,9 +895,14 @@ function renderWinBanner() {
   const el = $("#winBannerPlayer");
   if (currentRoom.phase === "ended" && currentRoom.winner) {
     el.classList.remove("hidden");
-    el.innerHTML = `<h1>${WIN_LABEL_VI[currentRoom.winner]}</h1>`;
+    el.innerHTML = `<div class="victory-icon">${winIconHtml(currentRoom.winner, 72)}</div><h1>${WIN_LABEL_VI[currentRoom.winner]}</h1>`;
+    if (!victorySoundPlayed) {
+      victorySoundPlayed = true;
+      playSound("victory");
+    }
   } else {
     el.classList.add("hidden");
+    victorySoundPlayed = false; // game mới (lobby/đang chơi) → sẵn sàng phát lại cho lần kết thúc sau
   }
 }
 

@@ -29,7 +29,7 @@ import {
   makeLogEntry, getRolePreset, buildRoleList,
   applyWildChildAdopt, checkWildChildTransform, isValidGuardianTarget,
   makeSecretEntry, groupSecretLog, formatSecretEntry, resolveWolfVote,
-  roleIconHtml, phaseIconHtml, avatarHtml,
+  roleIconHtml, phaseIconHtml, avatarHtml, winIconHtml,
 } from "./game.js";
 let roomCode = null;
 let roomRefDoc = null;
@@ -45,6 +45,9 @@ let manualOverrideActive = false;
 let lastNightStepSeen = null;
 let hunterManualOverride = false;
 let lastHunterPendingKey = null;
+// UI Phase 2: theo dõi ai còn sống ở lần render TRƯỚC, chỉ để gắn 1 class
+// animation "vừa chết" đúng 1 lần (không phải state game, không lưu Firebase).
+let previousAlivePlayerIds = new Set();
 // v4.0: thời gian mỗi bước đêm ở Player Action Mode (giây) + cờ chống
 // gọi trùng khi watcher tự động chốt bước.
 const NIGHT_STEP_SECONDS = 60;
@@ -428,6 +431,7 @@ async function resolveNightAndGoToDay(roomData) {
       logs.push(makeLogEntry(round, "night", `💀 ${d.name} đã chết — ${DEATH_CAUSE_LABEL_VI[d.cause]}`, "death"));
       secretLog.push(makeSecretEntry(round, "night", "death", null, d.name, DEATH_CAUSE_LABEL_VI[d.cause]));
     });
+    playSound("death");
   }
   // Sói Nguyền biến đổi vai trò (curse-transform) — thông tin BÍ MẬT, chỉ vào secretLog
   curseTransforms.forEach((t) => {
@@ -443,7 +447,7 @@ async function resolveNightAndGoToDay(roomData) {
     if (winner) {
       logs.push(makeLogEntry(round, "night", WIN_LABEL_VI[winner], "system"));
       await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", nightStep: null, winner, logs, secretLog, nightTimerEndAt: null });
-      playSound("death");
+      playSound("victory");
       return;
     }
     // Pause for hunter action
@@ -461,7 +465,7 @@ async function resolveNightAndGoToDay(roomData) {
   if (winner) {
     logs.push(makeLogEntry(round, "night", WIN_LABEL_VI[winner], "system"));
     await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", nightStep: null, winner, logs, secretLog, nightTimerEndAt: null });
-    playSound("death");
+    playSound("victory");
     return;
   }
   const count = Object.keys(updatedPlayers).length;
@@ -493,6 +497,7 @@ export async function resolveDayAndGoToNight() {
     .map(([id, c]) => `${currentRoom.players[id]?.name || "?"}: ${c} phiếu`)
     .join(", ");
   if (tallyStr) secretLog.push(makeSecretEntry(round, "day", "vote_result", null, null, tallyStr));
+  playSound("vote"); // vote ban ngày kết thúc (bất kể có ai bị treo cổ hay không)
   if (isTie) {
     logs.push(makeLogEntry(round, "day", `⚖️ Hòa phiếu — Không ai bị treo cổ.`, "vote"));
   } else if (!eliminatedId) {
@@ -504,6 +509,7 @@ export async function resolveDayAndGoToNight() {
       logs.push(makeLogEntry(round, "day", `💀 ${d.name} đã chết — ${DEATH_CAUSE_LABEL_VI[d.cause]}`, "death"));
       secretLog.push(makeSecretEntry(round, "day", "death", null, d.name, DEATH_CAUSE_LABEL_VI[d.cause]));
     });
+    if (deaths.length > 0) playSound("death");
     // Con Hoang: mẹ nuôi vừa bị treo cổ → hóa Sói realtime
     const wildChildCheck = checkWildChildTransform(playersAfterVote);
     playersAfterVote = wildChildCheck.updatedPlayers;
@@ -517,7 +523,7 @@ export async function resolveDayAndGoToNight() {
       if (winner) {
         logs.push(makeLogEntry(round, "day", WIN_LABEL_VI[winner], "system"));
         await updateDoc(roomRefDoc, { players: playersAfterVote, phase: "ended", winner, logs, secretLog });
-        playSound("death");
+        playSound("victory");
         return;
       }
       await updateDoc(roomRefDoc, {
@@ -534,7 +540,7 @@ export async function resolveDayAndGoToNight() {
   if (winner) {
     logs.push(makeLogEntry(round, "day", WIN_LABEL_VI[winner], "system"));
     await updateDoc(roomRefDoc, { players: playersAfterVote, phase: "ended", winner, logs, secretLog });
-    playSound("death");
+    playSound("victory");
     return;
   }
   const nextRound = round + 1;
@@ -575,6 +581,7 @@ export async function submitHunterKill(targetId) {
     logs.push(makeLogEntry(round, phase, `💀 ${d.name} đã chết — ${DEATH_CAUSE_LABEL_VI[d.cause]}`, "death"));
     secretLog.push(makeSecretEntry(round, phase, "death", null, d.name, DEATH_CAUSE_LABEL_VI[d.cause]));
   });
+  if (deaths.length > 0) playSound("death");
   transforms.forEach((t) => {
     secretLog.push(makeSecretEntry(round, phase, "wild_child_transform", t.name, null, "Mẹ nuôi đã chết → hóa Sói"));
   });
@@ -582,7 +589,7 @@ export async function submitHunterKill(targetId) {
   if (winner) {
     logs.push(makeLogEntry(round, phase, WIN_LABEL_VI[winner], "system"));
     await updateDoc(roomRefDoc, { players: updatedPlayers, phase: "ended", winner, hunterPending: null, logs, secretLog });
-    playSound("death");
+    playSound("victory");
     return;
   }
   if (phase === "night") {
@@ -812,14 +819,20 @@ function formatTimerDuration(seconds) {
 // 6. SOUND
 // ============================================================
 const SOUNDS = {
-  start: "assets/start.mp3",
-  night: "assets/night.mp3",
-  day: "assets/day.mp3",
-  death: "assets/death.mp3",
+  start: "assets/audio/start.mp3",
+  night: "assets/audio/night.mp3",
+  day: "assets/audio/day.mp3",
+  vote: "assets/audio/vote.mp3",
+  death: "assets/audio/death.mp3",
+  victory: "assets/audio/victory.mp3",
 };
 function playSound(key) {
   try {
-    new Audio(SOUNDS[key]).play().catch(() => {});
+    const audio = new Audio(SOUNDS[key]);
+    audio.volume = 0.6;
+    // .catch() nuốt lỗi nếu file chưa tồn tại hoặc trình duyệt chặn autoplay
+    // (mobile yêu cầu phải có tương tác người dùng trước đó trong cùng phiên).
+    audio.play().catch(() => {});
   } catch (e) {}
 }
 // ============================================================
@@ -851,17 +864,21 @@ function renderPhaseBanner() {
   const { phase, round } = currentRoom;
   const count = Object.keys(currentRoom.players || {}).length;
   const labels = {
-    lobby: { title: `🛋️ Phòng chờ (${count}/${currentRoom.settings?.playerCount || "?"} người)`, sub: "Đang chờ mọi người vào làng..." },
-    night: { title: `🌙 ĐÊM ${round}`, sub: "Sói đang săn mồi trong bóng tối..." },
-    day: { title: `☀️ NGÀY ${round}`, sub: "Một ngày mới — thảo luận và bỏ phiếu!" },
-    ended: { title: `🏁 KẾT THÚC`, sub: "Trận đấu đã ngã ngũ." },
+    lobby: { title: `Phòng chờ (${count}/${currentRoom.settings?.playerCount || "?"} người)`, sub: "Đang chờ mọi người vào làng..." },
+    night: { title: `ĐÊM ${round}`, sub: "Sói đang săn mồi trong bóng tối..." },
+    day: { title: `NGÀY ${round}`, sub: "Một ngày mới — thảo luận và bỏ phiếu!" },
+    ended: { title: `KẾT THÚC`, sub: "Trận đấu đã ngã ngũ." },
   };
   const cur = labels[phase] || { title: "", sub: "" };
+  // Icon hiển thị DUY NHẤT qua phaseIconHtml() (ảnh, tự fallback emoji nếu
+  // chưa có ảnh) — text không còn nhúng emoji riêng để tránh lặp icon.
   banner.innerHTML = `${phaseIconHtml(phase)}${cur.title}<span class="phase-sub">${cur.sub}</span>`;
   banner.className = `phase-banner phase-${phase}`;
-  // UI Phase 1: theme nền night/day theo phase hiện tại (chỉ đổi giao diện)
-  document.body.classList.toggle("night", phase === "night");
-  document.body.classList.toggle("day", phase !== "night");
+  // UI Phase 1/2: theme nền night/day theo phase hiện tại (chỉ đổi giao diện).
+  // Luôn remove cả 2 trước rồi add đúng 1 — không dùng toggle(name, force) vì
+  // có thể để lại cả 2 class cùng lúc nếu gọi nhiều lần liên tiếp.
+  document.body.classList.remove("night", "day");
+  document.body.classList.add(phase === "night" ? "night" : "day");
 }
 function renderPlayerList() {
   const container = $("#playerListAdmin");
@@ -871,9 +888,13 @@ function renderPlayerList() {
   // Count votes per player
   const voteTally = {};
   Object.values(votes).forEach((tid) => { if (tid) voteTally[tid] = (voteTally[tid] || 0) + 1; });
+  const currentAliveIds = new Set(Object.entries(players).filter(([, p]) => p.alive !== false).map(([id]) => id));
   Object.entries(players).forEach(([id, p]) => {
+    const isDead = p.alive === false;
+    // Vừa chết SO VỚI lần render trước → gắn class animation 1 lần (UI Phase 2)
+    const justDied = isDead && previousAlivePlayerIds.has(id) && previousAlivePlayerIds.size > 0;
     const div = document.createElement("div");
-    div.className = `player-row ${p.alive === false ? "dead" : ""}`;
+    div.className = `player-row ${isDead ? "dead" : ""} ${justDied ? "just-died" : ""}`;
     const roleText = p.role ? `${roleIconHtml(p.role, 18)}${ROLE_LABEL_VI[p.role]}` : "";
     const voteText = currentRoom.phase === "day" && voteTally[id] ? `🗳️ ${voteTally[id]}` : "";
     const loverName = p.loverPartnerId && players[p.loverPartnerId] ? `💞${players[p.loverPartnerId].name}(${ROLE_LABEL_VI[players[p.loverPartnerId].role] || "?"})` : "";
@@ -884,12 +905,13 @@ function renderPlayerList() {
         ? `<span class="player-status-waiting">🟢 Đang chờ</span>`
         : `<span class="player-role">${voteText}</span>`;
     div.innerHTML = `
-      <span class="player-name">${avatarHtml(p.name, 32)} ${p.alive === false ? "💀" : "🟢"} ${p.name} ${loverName}</span>
+      <span class="player-name">${avatarHtml(p.name, 32)} ${isDead ? "💀" : "🟢"} ${p.name} ${loverName}</span>
       ${statusOrRole}
       ${currentRoom.phase === "lobby" ? `<button class="btn-kick" data-id="${id}">Xóa</button>` : ""}
     `;
     container.appendChild(div);
   });
+  previousAlivePlayerIds = currentAliveIds;
   $$(".btn-kick").forEach((btn) => {
     btn.onclick = () => kickPlayer(btn.dataset.id);
   });
@@ -1667,6 +1689,7 @@ function renderWinScreen() {
       </div>`;
     }).join("");
     winDiv.innerHTML = `
+      <div class="victory-icon">${winIconHtml(currentRoom.winner, 64)}</div>
       <h1>${WIN_LABEL_VI[currentRoom.winner]}</h1>
       <div style="margin:16px 0">${roleReveal}</div>
       <p class="note-disabled">📜 Người chơi giờ có thể xem toàn bộ vai trò và lịch sử trận đấu ngay trên điện thoại của họ.</p>
